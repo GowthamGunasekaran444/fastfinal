@@ -1,0 +1,236 @@
+import csv
+import io
+import json
+import sqlite3
+from typing import List, Dict, Any, Union
+from fastapi import FastAPI, HTTPException, Body
+from collections import defaultdict
+
+app = FastAPI(
+    title="CSV to SQLite and Dropdown Filtering API",
+    description="API to upload CSV, get unique column values, and filter for cascading dropdowns."
+)
+
+DATABASE = 'data.db' # SQLite database file
+
+# --- Database Initialization and Helpers ---
+
+def get_db_connection():
+    """Establishes a connection to the SQLite database."""
+    conn = sqlite3.connect(DATABASE)
+    conn.row_factory = sqlite3.Row # This allows accessing columns by name
+    return conn
+
+def create_table_if_not_exists():
+    """
+    Creates the 'data_table' with 5 columns.
+    Drops the table first if it exists to ensure schema updates are applied.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    # Drop the table if it exists to ensure we always have the latest schema
+    cursor.execute('DROP TABLE IF EXISTS data_table')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS data_table (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            Business_Unit TEXT,
+            Country TEXT,
+            Region TEXT,
+            Business_Terms TEXT,
+            Sales_Channel TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+# Ensure the table is created when the app starts
+# FastAPI's lifespan events are better for this in production,
+# but for a simple script, calling it directly is fine.
+create_table_if_not_exists()
+
+# --- API Endpoints ---
+
+@app.post("/upload_csv", summary="Upload CSV String and Insert into Database")
+async def upload_csv(csv_data: Dict[str, str] = Body(..., example={"csv_string": "Business Unit,Country,Region,Business Terms,Sales Channel\nBU1,USA,North America,Term A,Online\nBU1,USA,North America,Term A,Offline\nBU1,USA,North America,Term B,Online"})):
+    """
+    **API 1:** Accepts a CSV string in the request body, converts it to JSON,
+    and inserts the data into a SQLite table named `data_table`.
+
+    **Request Body:**
+    - `csv_string`: A string containing the CSV data, including headers.
+      Example: `"Business Unit,Country,Region,Business Terms,Sales Channel\nBU1,USA,North America,Term A,Online"`
+    """
+    csv_string = csv_data.get('csv_string')
+
+    if not csv_string:
+        raise HTTPException(status_code=400, detail="No CSV string provided in the request body.")
+
+    try:
+        # Use StringIO to treat the string as a file
+        csv_file = io.StringIO(csv_string)
+        reader = csv.DictReader(csv_file)
+
+        # Map CSV headers to database column names
+        column_mapping = {
+            'Business Unit': 'Business_Unit',
+            'Country': 'Country',
+            'Region': 'Region',
+            'Business Terms': 'Business_Terms',
+            'Sales Channel': 'Sales_Channel'
+        }
+        expected_db_columns = list(column_mapping.values())
+
+        # Check if all expected CSV headers are present
+        if not all(csv_header in reader.fieldnames for csv_header in column_mapping.keys()):
+            # If not, and the number of columns matches, try to map by order
+            if len(reader.fieldnames) == len(column_mapping):
+                csv_file.seek(0) # Reset file pointer
+                lines = csv_file.readlines()
+                # Replace header line with expected database columns for DictReader
+                lines[0] = ','.join(expected_db_columns) + '\n'
+                csv_file_remapped = io.StringIO(''.join(lines))
+                reader = csv.DictReader(csv_file_remapped)
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="CSV headers do not match expected columns (Business Unit, Country, Region, Business Terms, Sales Channel) or have an incorrect number of columns. Please ensure your CSV has 5 columns with correct headers."
+                )
+
+        rows_to_insert = []
+        for row in reader:
+            processed_row = {}
+            for csv_header, db_column in column_mapping.items():
+                # Get value using original CSV header, then store with DB column name
+                processed_row[db_column] = row.get(csv_header, '')
+            rows_to_insert.append(processed_row)
+
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Insert data into the table
+        for row in rows_to_insert:
+            cursor.execute(
+                "INSERT INTO data_table (Business_Unit, Country, Region, Business_Terms, Sales_Channel) VALUES (?, ?, ?, ?, ?)",
+                (row['Business_Unit'], row['Country'], row['Region'], row['Business_Terms'], row['Sales_Channel'])
+            )
+        conn.commit()
+        conn.close()
+
+        return {"message": f"Successfully inserted {len(rows_to_insert)} rows into the database."}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to process CSV: {str(e)}")
+
+@app.get("/get_dropdown_initial_values", summary="Get Initial Unique Values for Dropdowns")
+async def get_dropdown_initial_values() -> Dict[str, List[str]]:
+    """
+    **API 2:** Fetches unique values for all 5 columns
+    from the `data_table` (Business_Unit, Country, Region, Business_Terms, Sales_Channel).
+    This is ideal for populating the initial state of dropdown menus.
+
+    **Response:**
+    A JSON object where keys are column names and values are lists of unique strings.
+    Example: `{"Business_Unit": ["BU1", "BU2"], "Country": ["USA", "Canada"], ...}`
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        unique_values: Dict[str, List[str]] = {
+            'Business_Unit': [],
+            'Country': [],
+            'Region': [],
+            'Business_Terms': [],
+            'Sales_Channel': []
+        }
+
+        # Fetch unique values for each column
+        for col in unique_values.keys():
+            cursor.execute(f"SELECT DISTINCT {col} FROM data_table WHERE {col} IS NOT NULL AND {col} != '' ORDER BY {col}")
+            unique_values[col] = [row[0] for row in cursor.fetchall()]
+
+        conn.close()
+        return unique_values
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch initial dropdown values: {str(e)}")
+
+@app.post("/get_cascading_dropdown_values", summary="Get Cascading Dropdown Values Based on Filters")
+async def get_cascading_dropdown_values(selected_filters: Dict[str, Union[str, List[str]]] = Body(..., example={"Business_Unit": ["BU1", "BU2"], "Country": "USA"})) -> Dict[str, List[str]]:
+    """
+    **API 3:** Fetches unique values for the remaining columns based on
+    the currently selected filter values from previous dropdowns. This enables
+    cascading dropdown functionality.
+
+    **Request Body:**
+    - `selected_filters`: A dictionary where keys are column names (e.g., `Business_Unit`, `Country`)
+      and values can be either a single string or a list of strings for multi-selection.
+      Example: `{"Business_Unit": ["BU1", "BU2"], "Country": "USA"}`
+
+    **Response:**
+    A JSON object where keys are the *remaining* column names and values are
+    lists of unique strings that match the applied filters.
+    Example: `{"Region": ["North America"], "Business_Terms": ["Term A", "Term B"], ...}`
+    """
+    if not isinstance(selected_filters, dict):
+        raise HTTPException(status_code=400, detail="`selected_filters` must be a dictionary.")
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        all_columns = ['Business_Unit', 'Country', 'Region', 'Business_Terms', 'Sales_Channel']
+        # Determine which columns are already filtered
+        filtered_columns = selected_filters.keys()
+        # Determine which columns need to be populated (those not yet filtered)
+        columns_to_populate = [col for col in all_columns if col not in filtered_columns]
+
+        # Build the WHERE clause for filtering
+        where_clauses = []
+        params = []
+        for col, value in selected_filters.items():
+            if col in all_columns: # Basic validation for column names
+                if isinstance(value, list):
+                    # For multi-select, use IN clause
+                    placeholders = ','.join(['?' for _ in value])
+                    where_clauses.append(f"{col} IN ({placeholders})")
+                    params.extend(value)
+                else:
+                    # For single select, use = clause
+                    where_clauses.append(f"{col} = ?")
+                    params.append(value)
+
+        where_sql = " WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+
+        result_values: Dict[str, List[str]] = defaultdict(list)
+
+        # For each column that needs to be populated, fetch its unique values
+        for col in columns_to_populate:
+            # Construct the query, ensuring non-empty values and ordering
+            query_parts = [f"SELECT DISTINCT {col} FROM data_table"]
+            if where_sql:
+                query_parts.append(where_sql)
+                query_parts.append(f"AND {col} IS NOT NULL AND {col} != ''")
+            else:
+                query_parts.append(f"WHERE {col} IS NOT NULL AND {col} != ''")
+            query_parts.append(f"ORDER BY {col}")
+
+            query = " ".join(query_parts)
+
+            cursor.execute(query, params)
+            result_values[col] = [row[0] for row in cursor.fetchall()]
+
+        conn.close()
+        return result_values
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch cascading dropdown values: {str(e)}")
+
+# To run this FastAPI application:
+# 1. Save the code as a Python file (e.g., main.py).
+# 2. Install FastAPI and Uvicorn: pip install fastapi "uvicorn[standard]"
+# 3. Run from your terminal: uvicorn main:app --reload
+#    (The --reload flag is for development, it reloads the server on code changes)
+# 4. Access the API documentation at: http://127.0.0.1:8000/docs (Swagger UI)
+#    or http://127.0.0.1:8000/redoc (ReDoc)
