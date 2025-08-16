@@ -1,135 +1,240 @@
-import React, { useState } from "react";
-import { Modal, Button, Input, Space, Typography, Tag, Divider } from "antd";
+import React, { useState, useRef, useEffect } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
+import { ListItem, ListItemText, IconButton, Menu, MenuItem, TextField, Box } from '@mui/material';
+import MoreVertIcon from '@mui/icons-material/MoreVert';
+import { selectChatById, renameChat, deleteChat } from '../redux/chatSlice';
 
-const { TextArea, Search } = Input;
-const { Text } = Typography;
+// Wrap the component in React.memo for performance
+const ChatItem = React.memo(({ chatId, style }) => {
+  const dispatch = useDispatch();
+  const chat = useSelector((state) => selectChatById(state, chatId));
 
-const CommonDialog = ({
-  visible,
-  title,
-  contentType,
-  onCancel,
-  onSubmit,
-  chips = [],
-  onSearch,
-}) => {
-  const [selectedChips, setSelectedChips] = useState([]);
-  const [inputValue, setInputValue] = useState("");
+  const [anchorEl, setAnchorEl] = useState(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedName, setEditedName] = useState('');
+  const inputRef = useRef(null);
 
-  const handleChipToggle = (chip) => {
-    setSelectedChips((prev) =>
-      prev.includes(chip) ? prev.filter((c) => c !== chip) : [...prev, chip]
-    );
+  const open = Boolean(anchorEl);
+
+  // Set initial edited name when chat data loads or changes
+  useEffect(() => {
+    if (chat) {
+      setEditedName(chat.name);
+    }
+  }, [chat]);
+
+  // Focus the input when isEditing becomes true
+  useEffect(() => {
+    if (isEditing && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [isEditing]);
+
+  const handleMenuClick = (event) => setAnchorEl(event.currentTarget);
+  const handleMenuClose = () => setAnchorEl(null);
+
+  const handleRenameClick = () => {
+    // Start editing directly
+    setIsEditing(true);
+    handleMenuClose();
   };
 
-  const renderFeedbackContent = () => (
-    <>
-      {/* Chips */}
-      <Space wrap>
-        {chips.map((chip) => (
-          <Tag.CheckableTag
-            key={chip}
-            checked={selectedChips.includes(chip)}
-            onChange={() => handleChipToggle(chip)}
-          >
-            {chip}
-          </Tag.CheckableTag>
-        ))}
-      </Space>
+  const handleDelete = () => {
+    if (window.confirm('Are you sure you want to delete this chat?')) {
+      dispatch(deleteChat(chatId));
+    }
+    handleMenuClose();
+  };
 
-      {/* Optional Input */}
-      <TextArea
-        placeholder="Optional..."
-        value={inputValue}
-        onChange={(e) => setInputValue(e.target.value)}
-        style={{ marginTop: 12 }}
-      />
+  const handleInputChange = (event) => {
+    setEditedName(event.target.value);
+  };
 
-      {/* Disclaimer */}
-      <Text
-        type="secondary"
-        style={{ fontSize: 12, marginTop: 8, display: "block" }}
-      >
-        Submitted feedback will include this full conversation. Help improve
-        tools. Learn more.
-      </Text>
-    </>
-  );
+  const handleInputBlur = () => {
+    if (editedName.trim() !== '' && editedName !== chat.name) {
+      dispatch(renameChat({ id: chatId, newName: editedName.trim() }));
+    } else {
+      // Revert to original name if input is empty or unchanged
+      setEditedName(chat.name);
+    }
+    setIsEditing(false);
+  };
 
-  const renderSearchContent = () => (
-    <>
-      <Search
-        placeholder="Search..."
-        allowClear
-        enterButton
-        onSearch={onSearch}
-        style={{ marginBottom: 12 }}
-      />
-      <Space>
-        {["Last 7 days", "Last 15 days", "Last 30 days"].map((label) => (
-          <Button key={label} onClick={() => onSearch(label)}>
-            {label}
-          </Button>
-        ))}
-      </Space>
-    </>
-  );
+  const handleInputKeyPress = (event) => {
+    if (event.key === 'Enter') {
+      inputRef.current.blur(); // Trigger blur to save changes
+    }
+  };
+
+  if (!chat) return null; // Handle case where chat might be deleted
 
   return (
-    <Modal
-      title={
-        <div style={{ display: "flex", justifyContent: "space-between" }}>
-          <Text strong>{title}</Text>
-          <Button type="text" onClick={onCancel}>
-            ✕
-          </Button>
-        </div>
-      }
-      open={visible}
-      footer={
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-          <Button onClick={onCancel}>Cancel</Button>
-          <Button
-            type="primary"
-            onClick={() => onSubmit({ selectedChips, inputValue })}
-          >
-            Submit Feedback
-          </Button>
-        </div>
-      }
-      closable={false}
-      width={500}
-    >
-      {contentType === "feedback"
-        ? renderFeedbackContent()
-        : renderSearchContent()}
-    </Modal>
+    <div style={style}>
+      <ListItem
+        sx={{
+          'list-style': 'none',
+          '&:hover': {
+            backgroundColor: 'rgba(255, 255, 255, 0.08)',
+            '.triple-dot-menu': { opacity: 1 },
+          },
+        }}
+      >
+        {isEditing ? (
+          <TextField
+            inputRef={inputRef}
+            variant="outlined"
+            size="small"
+            value={editedName}
+            onChange={handleInputChange}
+            onBlur={handleInputBlur}
+            onKeyPress={handleInputKeyPress}
+            sx={{ flexGrow: 1, mr: 1, '.MuiOutlinedInput-root': { height: 40, color: 'white' }, '.MuiInputBase-input': { padding: '8px 14px' } }}
+          />
+        ) : (
+          <ListItemText primary={chat.name} sx={{ flexGrow: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} />
+        )}
+        <IconButton
+          className="triple-dot-menu"
+          sx={{ opacity: isEditing ? 0 : 0, transition: 'opacity 0.2s', ml: 1 }} // Keep hidden when editing or not hovered
+          onClick={handleMenuClick}
+        >
+          <MoreVertIcon />
+        </IconButton>
+        <Menu anchorEl={anchorEl} open={open} onClose={handleMenuClose}>
+          <MenuItem onClick={handleRenameClick}>Rename</MenuItem>
+          <MenuItem onClick={handleDelete}>Delete</MenuItem>
+        </Menu>
+      </ListItem>
+    </div>
   );
+});
+
+export default ChatItem;
+
+
+
+
+================================================================
+
+
+import { createSlice, createEntityAdapter, createAsyncThunk } from '@reduxjs/toolkit';
+
+// createEntityAdapter will normalize ALL chat items globally
+// This allows for efficient updates (rename/delete) of individual chats by ID
+const chatAdapter = createEntityAdapter({
+  selectId: (chat) => chat.id,
+  sortComparer: (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(), // Sort by newest first
+});
+
+// Helper function to categorize chats
+const categorizeChats = (allChats) => {
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const sevenDaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
+  const thirtyDaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30);
+
+  const todayChats = [];
+  const last7DaysChats = [];
+  const last30DaysChats = [];
+
+  allChats.forEach(chat => {
+    const chatDate = new Date(chat.timestamp);
+    if (chatDate.getTime() >= todayStart.getTime()) {
+      todayChats.push(chat);
+    } else if (chatDate.getTime() >= sevenDaysAgo.getTime()) {
+      last7DaysChats.push(chat);
+    } else if (chatDate.getTime() >= thirtyDaysAgo.getTime()) {
+      last30DaysChats.push(chat);
+    }
+  });
+
+  // Limit to 10 records per segment as requested
+  return [
+    { category: "Today", chatList: todayChats.slice(0, 10) },
+    { category: "Last 7 days", chatList: last7DaysChats.slice(0, 10) },
+    { category: "Last 30 days", chatList: last30DaysChats.slice(0, 10) },
+  ];
 };
 
-export default CommonDialog;
 
+// Async thunk to simulate fetching chat history with categorized data
+export const fetchChatHistory = createAsyncThunk(
+  'chats/fetchChatHistory',
+  async (_, { rejectWithValue }) => {
+    try {
+      // Simulate an API call returning a flat list of chat items
+      const response = await new Promise((resolve) =>
+        setTimeout(() => {
+          const mockData = Array.from({ length: 50 }, (_, i) => {
+            const dateOffset = Math.floor(Math.random() * 31); // Random day within last 30 days
+            const date = new Date();
+            date.setDate(date.getDate() - dateOffset);
+            return {
+              id: `chat-${i + 1}`,
+              name: `Chat History Item #${i + 1}`,
+              timestamp: date.toISOString(), // Assign a random date within the last 30 days
+            };
+          });
+          resolve(mockData);
+        }, 500)
+      );
+      return response; // This is a flat array of all chats
+    } catch (error) {
+      return rejectWithValue(error.message);
+    }
+  }
+);
 
+const chatSlice = createSlice({
+  name: 'chats',
+  initialState: chatAdapter.getInitialState({
+    categories: [], // New state to hold the categorized structure
+    status: 'idle',
+    error: null,
+  }),
+  reducers: {
+    // Reducers for individual chat operations
+    renameChat: (state, action) => {
+      const { id, newName } = action.payload;
+      chatAdapter.updateOne(state, { id, changes: { name: newName } });
+      // After updating a chat, re-categorize the data to reflect changes in the UI
+      state.categories = categorizeChats(chatAdapter.getSelectors().selectAll(state));
+    },
+    deleteChat: (state, action) => {
+      chatAdapter.removeOne(state, action.payload);
+      // After deleting a chat, re-categorize the data to reflect changes in the UI
+      state.categories = categorizeChats(chatAdapter.getSelectors().selectAll(state));
+    },
+  },
+  extraReducers: (builder) => {
+    builder
+      .addCase(fetchChatHistory.pending, (state) => {
+        state.status = 'loading';
+      })
+      .addCase(fetchChatHistory.fulfilled, (state, action) => {
+        state.status = 'succeeded';
+        // First, add all fetched chats to the normalized state
+        chatAdapter.setAll(state, action.payload);
+        // Then, derive the categorized view from the complete set of chats
+        state.categories = categorizeChats(action.payload);
+      })
+      .addCase(fetchChatHistory.rejected, (state, action) => {
+        state.status = 'failed';
+        state.error = action.error.message;
+      });
+  },
+});
 
+export const { renameChat, deleteChat } = chatSlice.actions;
 
+// Export selectors from the adapter for individual chat access (by ID)
+export const {
+  selectAll: selectAllNormalizedChats, // For internal use if needed
+  selectById: selectChatById, // Used by ChatItem
+} = chatAdapter.getSelectors((state) => state.chats);
 
- <CommonDialog
-        visible={visible}
-        title="Provide Feedback"
-        // contentType="feedback"
-        chips={[
-          "Data accuracy concern",
-          "Methodology issue",
-          "Visual problem",
-          "Missing context",
-          "Not actionable",
-          "Other reason",
-        ]}
-        onCancel={() => setVisible(false)}
-        onSubmit={(data) => {
-          console.log("Submitted:", data);
-          setVisible(false);
-        }}
-        onSearch={(value) => console.log("Search:", value)}
-      />
-    </>
+// New selector for the categorized chat list
+export const selectCategorizedChats = (state) => state.chats.categories;
+
+export default chatSlice.reducer;
+
