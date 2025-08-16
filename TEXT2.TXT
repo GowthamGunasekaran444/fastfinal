@@ -1,141 +1,46 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { useDispatch, useSelector } from 'react-redux';
-import { ListItem, ListItemText, IconButton, Menu, MenuItem, TextField, Box } from '@mui/material';
-import MoreVertIcon from '@mui/icons-material/MoreVert';
-import { selectChatById, renameChat, deleteChat } from '../redux/chatSlice';
+import { createSlice, createEntityAdapter, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 
-// Wrap the component in React.memo for performance
-const ChatItem = React.memo(({ chatId, style }) => {
-  const dispatch = useDispatch();
-  const chat = useSelector((state) => selectChatById(state, chatId));
+// Define the shape of a single Chat item
+interface Chat {
+  id: string;
+  name: string;
+  timestamp: string; // ISO string format
+}
 
-  const [anchorEl, setAnchorEl] = useState(null);
-  const [isEditing, setIsEditing] = useState(false);
-  const [editedName, setEditedName] = useState('');
-  const inputRef = useRef(null);
+// Define the shape of a categorized list item
+interface ChatCategory {
+  category: string;
+  chatList: Chat[];
+}
 
-  const open = Boolean(anchorEl);
-
-  // Set initial edited name when chat data loads or changes
-  useEffect(() => {
-    if (chat) {
-      setEditedName(chat.name);
-    }
-  }, [chat]);
-
-  // Focus the input when isEditing becomes true
-  useEffect(() => {
-    if (isEditing && inputRef.current) {
-      inputRef.current.focus();
-    }
-  }, [isEditing]);
-
-  const handleMenuClick = (event) => setAnchorEl(event.currentTarget);
-  const handleMenuClose = () => setAnchorEl(null);
-
-  const handleRenameClick = () => {
-    // Start editing directly
-    setIsEditing(true);
-    handleMenuClose();
-  };
-
-  const handleDelete = () => {
-    if (window.confirm('Are you sure you want to delete this chat?')) {
-      dispatch(deleteChat(chatId));
-    }
-    handleMenuClose();
-  };
-
-  const handleInputChange = (event) => {
-    setEditedName(event.target.value);
-  };
-
-  const handleInputBlur = () => {
-    if (editedName.trim() !== '' && editedName !== chat.name) {
-      dispatch(renameChat({ id: chatId, newName: editedName.trim() }));
-    } else {
-      // Revert to original name if input is empty or unchanged
-      setEditedName(chat.name);
-    }
-    setIsEditing(false);
-  };
-
-  const handleInputKeyPress = (event) => {
-    if (event.key === 'Enter') {
-      inputRef.current.blur(); // Trigger blur to save changes
-    }
-  };
-
-  if (!chat) return null; // Handle case where chat might be deleted
-
-  return (
-    <div style={style}>
-      <ListItem
-        sx={{
-          'list-style': 'none',
-          '&:hover': {
-            backgroundColor: 'rgba(255, 255, 255, 0.08)',
-            '.triple-dot-menu': { opacity: 1 },
-          },
-        }}
-      >
-        {isEditing ? (
-          <TextField
-            inputRef={inputRef}
-            variant="outlined"
-            size="small"
-            value={editedName}
-            onChange={handleInputChange}
-            onBlur={handleInputBlur}
-            onKeyPress={handleInputKeyPress}
-            sx={{ flexGrow: 1, mr: 1, '.MuiOutlinedInput-root': { height: 40, color: 'white' }, '.MuiInputBase-input': { padding: '8px 14px' } }}
-          />
-        ) : (
-          <ListItemText primary={chat.name} sx={{ flexGrow: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} />
-        )}
-        <IconButton
-          className="triple-dot-menu"
-          sx={{ opacity: isEditing ? 0 : 0, transition: 'opacity 0.2s', ml: 1 }} // Keep hidden when editing or not hovered
-          onClick={handleMenuClick}
-        >
-          <MoreVertIcon />
-        </IconButton>
-        <Menu anchorEl={anchorEl} open={open} onClose={handleMenuClose}>
-          <MenuItem onClick={handleRenameClick}>Rename</MenuItem>
-          <MenuItem onClick={handleDelete}>Delete</MenuItem>
-        </Menu>
-      </ListItem>
-    </div>
-  );
-});
-
-export default ChatItem;
-
-
-
-
-================================================================
-
-
-import { createSlice, createEntityAdapter, createAsyncThunk } from '@reduxjs/toolkit';
+// Define the shape of the entire slice state
+interface ChatsState {
+  categories: ChatCategory[];
+  status: 'idle' | 'loading' | 'succeeded' | 'failed';
+  error: string | null;
+}
 
 // createEntityAdapter will normalize ALL chat items globally
 // This allows for efficient updates (rename/delete) of individual chats by ID
-const chatAdapter = createEntityAdapter({
+const chatAdapter = createEntityAdapter<Chat>({
   selectId: (chat) => chat.id,
-  sortComparer: (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(), // Sort by newest first
+  // This sortComparer is used when selecting all chats from the normalized state,
+  // which is then used by categorizeChats.
+  sortComparer: (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
 });
 
-// Helper function to categorize chats
-const categorizeChats = (allChats) => {
+// Helper function to re-categorize chats after a local update (rename/delete)
+// This function is still necessary because rename/delete operate on the
+// flat normalized state, and we need to re-generate the categorized view.
+const categorizeChats = (allChats: Chat[]): ChatCategory[] => {
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const sevenDaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
   const thirtyDaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30);
 
-  const todayChats = [];
-  const last7DaysChats = [];
-  const last30DaysChats = [];
+  const todayChats: Chat[] = [];
+  const last7DaysChats: Chat[] = [];
+  const last30DaysChats: Chat[] = [];
 
   allChats.forEach(chat => {
     const chatDate = new Date(chat.timestamp);
@@ -148,7 +53,7 @@ const categorizeChats = (allChats) => {
     }
   });
 
-  // Limit to 10 records per segment as requested
+  // Limit to 10 records per segment as requested for UI display
   return [
     { category: "Today", chatList: todayChats.slice(0, 10) },
     { category: "Last 7 days", chatList: last7DaysChats.slice(0, 10) },
@@ -157,29 +62,55 @@ const categorizeChats = (allChats) => {
 };
 
 
-// Async thunk to simulate fetching chat history with categorized data
-export const fetchChatHistory = createAsyncThunk(
+// Async thunk to simulate fetching chat history with pre-categorized data
+// Returns an array of ChatCategory
+export const fetchChatHistory = createAsyncThunk<ChatCategory[], void, { rejectValue: string }>(
   'chats/fetchChatHistory',
   async (_, { rejectWithValue }) => {
     try {
-      // Simulate an API call returning a flat list of chat items
-      const response = await new Promise((resolve) =>
+      // Simulate an API call returning the exact categorized structure
+      const response = await new Promise<ChatCategory[]>((resolve) =>
         setTimeout(() => {
-          const mockData = Array.from({ length: 50 }, (_, i) => {
-            const dateOffset = Math.floor(Math.random() * 31); // Random day within last 30 days
-            const date = new Date();
-            date.setDate(date.getDate() - dateOffset);
-            return {
-              id: `chat-${i + 1}`,
-              name: `Chat History Item #${i + 1}`,
-              timestamp: date.toISOString(), // Assign a random date within the last 30 days
-            };
-          });
-          resolve(mockData);
+          // Mock data matching the requested output format
+          const mockCategorizedData: ChatCategory[] = [
+            {
+              category: "Today",
+              chatList: Array.from({ length: 10 }, (_, i) => ({
+                id: `today-${i + 1}-${Date.now() + i}`,
+                name: `Today Chat ${i + 1}`,
+                timestamp: new Date().toISOString(),
+              }))
+            },
+            {
+              category: "Last 7 days",
+              chatList: Array.from({ length: 10 }, (_, i) => {
+                const date = new Date();
+                date.setDate(date.getDate() - (Math.floor(Math.random() * 6) + 1)); // 1 to 6 days ago
+                return {
+                  id: `last7-${i + 1}-${Date.now() + i}`,
+                  name: `Last 7 Days Chat ${i + 1}`,
+                  timestamp: date.toISOString(),
+                };
+              })
+            },
+            {
+              category: "Last 30 days",
+              chatList: Array.from({ length: 10 }, (_, i) => {
+                const date = new Date();
+                date.setDate(date.getDate() - (Math.floor(Math.random() * 23) + 7)); // 7 to 30 days ago
+                return {
+                  id: `last30-${i + 1}-${Date.now() + i}`,
+                  name: `Last 30 Days Chat ${i + 1}`,
+                  timestamp: date.toISOString(),
+                };
+              })
+            }
+          ];
+          resolve(mockCategorizedData);
         }, 500)
       );
-      return response; // This is a flat array of all chats
-    } catch (error) {
+      return response;
+    } catch (error: any) { // Use 'any' here for generic error, or define a more specific error type
       return rejectWithValue(error.message);
     }
   }
@@ -187,22 +118,28 @@ export const fetchChatHistory = createAsyncThunk(
 
 const chatSlice = createSlice({
   name: 'chats',
-  initialState: chatAdapter.getInitialState({
-    categories: [], // New state to hold the categorized structure
+  // Get the initial state from the adapter and then add our custom fields
+  initialState: chatAdapter.getInitialState<ChatsState>({
+    categories: [], // This will directly store the categorized array from the API
     status: 'idle',
     error: null,
   }),
   reducers: {
     // Reducers for individual chat operations
-    renameChat: (state, action) => {
+    renameChat: (state, action: PayloadAction<{ id: string; newName: string }>) => {
       const { id, newName } = action.payload;
+      // Update the normalized entity
       chatAdapter.updateOne(state, { id, changes: { name: newName } });
-      // After updating a chat, re-categorize the data to reflect changes in the UI
+      // After updating a chat, re-categorize the data from the entire normalized state
+      // to reflect changes in the categorized UI view.
       state.categories = categorizeChats(chatAdapter.getSelectors().selectAll(state));
     },
-    deleteChat: (state, action) => {
-      chatAdapter.removeOne(state, action.payload);
-      // After deleting a chat, re-categorize the data to reflect changes in the UI
+    deleteChat: (state, action: PayloadAction<string>) => {
+      const idToDelete = action.payload;
+      // Remove the normalized entity
+      chatAdapter.removeOne(state, idToDelete);
+      // After deleting a chat, re-categorize the data from the entire normalized state
+      // to reflect changes in the categorized UI view.
       state.categories = categorizeChats(chatAdapter.getSelectors().selectAll(state));
     },
   },
@@ -211,16 +148,28 @@ const chatSlice = createSlice({
       .addCase(fetchChatHistory.pending, (state) => {
         state.status = 'loading';
       })
-      .addCase(fetchChatHistory.fulfilled, (state, action) => {
+      .addCase(fetchChatHistory.fulfilled, (state, action: PayloadAction<ChatCategory[]>) => {
         state.status = 'succeeded';
-        // First, add all fetched chats to the normalized state
-        chatAdapter.setAll(state, action.payload);
-        // Then, derive the categorized view from the complete set of chats
-        state.categories = categorizeChats(action.payload);
+        const incomingCategorizedData = action.payload;
+
+        // Extract all individual chat items from the categorized data
+        const allChatsFlat: Chat[] = [];
+        incomingCategorizedData.forEach(categoryGroup => {
+          allChatsFlat.push(...categoryGroup.chatList);
+        });
+
+        // Add all fetched chats to the normalized state using the adapter.
+        // This is crucial for renameChat/deleteChat to work on individual items.
+        chatAdapter.setAll(state, allChatsFlat);
+
+        // Directly store the categorized data from the API response
+        state.categories = incomingCategorizedData;
       })
       .addCase(fetchChatHistory.rejected, (state, action) => {
         state.status = 'failed';
-        state.error = action.error.message;
+        // Redux Toolkit's createAsyncThunk action.error.message is typed as string | undefined,
+        // so we can safely assign it or default to a generic message.
+        state.error = action.error.message || 'An unknown error occurred';
       });
   },
 });
@@ -229,12 +178,11 @@ export const { renameChat, deleteChat } = chatSlice.actions;
 
 // Export selectors from the adapter for individual chat access (by ID)
 export const {
-  selectAll: selectAllNormalizedChats, // For internal use if needed
-  selectById: selectChatById, // Used by ChatItem
-} = chatAdapter.getSelectors((state) => state.chats);
+  selectAll: selectAllNormalizedChats, // For internal use if needed (e.g., re-categorizing)
+  selectById: selectChatById, // Used by ChatItem to get its specific data
+} = chatAdapter.getSelectors((state: { chats: ChatsState & ReturnType<typeof chatAdapter.getInitialState> }) => state.chats);
 
-// New selector for the categorized chat list
-export const selectCategorizedChats = (state) => state.chats.categories;
+// New selector for the categorized chat list, used by ChatHistoryAccordion
+export const selectCategorizedChats = (state: { chats: ChatsState }) => state.chats.categories;
 
 export default chatSlice.reducer;
-
