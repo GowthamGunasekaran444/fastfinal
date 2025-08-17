@@ -1,188 +1,99 @@
-import { createSlice, createEntityAdapter, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
+import { createSlice, createAsyncThunk, PayloadAction } from "@reduxjs/toolkit";
+import axios from "axios";
 
-// Define the shape of a single Chat item
-interface Chat {
-  id: string;
-  name: string;
-  timestamp: string; // ISO string format
+// Define the shape of a Session object
+export interface Session {
+  session_id: string;
+  session_name: string;
+  user_id: string;
 }
 
-// Define the shape of a categorized list item
-interface ChatCategory {
-  category: string;
-  chatList: Chat[];
-}
-
-// Define the shape of the entire slice state
-interface ChatsState {
-  categories: ChatCategory[];
-  status: 'idle' | 'loading' | 'succeeded' | 'failed';
+// Slice state type
+interface SearchModalState {
+  query: string;
+  results: Session[];
+  loading: boolean;
   error: string | null;
 }
 
-// createEntityAdapter will normalize ALL chat items globally
-// This allows for efficient updates (rename/delete) of individual chats by ID
-const chatAdapter = createEntityAdapter<Chat>({
-  selectId: (chat) => chat.id,
-  // This sortComparer is used when selecting all chats from the normalized state,
-  // which is then used by categorizeChats.
-  sortComparer: (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
-});
-
-// Helper function to re-categorize chats after a local update (rename/delete)
-// This function is still necessary because rename/delete operate on the
-// flat normalized state, and we need to re-generate the categorized view.
-const categorizeChats = (allChats: Chat[]): ChatCategory[] => {
-  const now = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const sevenDaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
-  const thirtyDaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30);
-
-  const todayChats: Chat[] = [];
-  const last7DaysChats: Chat[] = [];
-  const last30DaysChats: Chat[] = [];
-
-  allChats.forEach(chat => {
-    const chatDate = new Date(chat.timestamp);
-    if (chatDate.getTime() >= todayStart.getTime()) {
-      todayChats.push(chat);
-    } else if (chatDate.getTime() >= sevenDaysAgo.getTime()) {
-      last7DaysChats.push(chat);
-    } else if (chatDate.getTime() >= thirtyDaysAgo.getTime()) {
-      last30DaysChats.push(chat);
-    }
-  });
-
-  // Limit to 10 records per segment as requested for UI display
-  return [
-    { category: "Today", chatList: todayChats.slice(0, 10) },
-    { category: "Last 7 days", chatList: last7DaysChats.slice(0, 10) },
-    { category: "Last 30 days", chatList: last30DaysChats.slice(0, 10) },
-  ];
+// Initial state
+const initialState: SearchModalState = {
+  query: "",
+  results: [],
+  loading: false,
+  error: null,
 };
 
-
-// Async thunk to simulate fetching chat history with pre-categorized data
-// Returns an array of ChatCategory
-export const fetchChatHistory = createAsyncThunk<ChatCategory[], void, { rejectValue: string }>(
-  'chats/fetchChatHistory',
-  async (_, { rejectWithValue }) => {
-    try {
-      // Simulate an API call returning the exact categorized structure
-      const response = await new Promise<ChatCategory[]>((resolve) =>
-        setTimeout(() => {
-          // Mock data matching the requested output format
-          const mockCategorizedData: ChatCategory[] = [
-            {
-              category: "Today",
-              chatList: Array.from({ length: 10 }, (_, i) => ({
-                id: `today-${i + 1}-${Date.now() + i}`,
-                name: `Today Chat ${i + 1}`,
-                timestamp: new Date().toISOString(),
-              }))
-            },
-            {
-              category: "Last 7 days",
-              chatList: Array.from({ length: 10 }, (_, i) => {
-                const date = new Date();
-                date.setDate(date.getDate() - (Math.floor(Math.random() * 6) + 1)); // 1 to 6 days ago
-                return {
-                  id: `last7-${i + 1}-${Date.now() + i}`,
-                  name: `Last 7 Days Chat ${i + 1}`,
-                  timestamp: date.toISOString(),
-                };
-              })
-            },
-            {
-              category: "Last 30 days",
-              chatList: Array.from({ length: 10 }, (_, i) => {
-                const date = new Date();
-                date.setDate(date.getDate() - (Math.floor(Math.random() * 23) + 7)); // 7 to 30 days ago
-                return {
-                  id: `last30-${i + 1}-${Date.now() + i}`,
-                  name: `Last 30 Days Chat ${i + 1}`,
-                  timestamp: date.toISOString(),
-                };
-              })
-            }
-          ];
-          resolve(mockCategorizedData);
-        }, 500)
-      );
-      return response;
-    } catch (error: any) { // Use 'any' here for generic error, or define a more specific error type
-      return rejectWithValue(error.message);
-    }
+// Async thunk
+export const searchSessions = createAsyncThunk<
+  Session[], // Return type
+  string,    // Argument type (query string)
+  { rejectValue: string }
+>("searchModal/searchSessions", async (query, { rejectWithValue }) => {
+  try {
+    const response = await axios.post<Session[]>("/sessions/search", {
+      session_name: query,
+    });
+    return response.data;
+  } catch (error: any) {
+    return rejectWithValue(error.response?.data || "API error");
   }
-);
+});
 
-const chatSlice = createSlice({
-  name: 'chats',
-  // Get the initial state from the adapter and then add our custom fields
-  initialState: chatAdapter.getInitialState<ChatsState>({
-    categories: [], // This will directly store the categorized array from the API
-    status: 'idle',
-    error: null,
-  }),
+const searchModalSlice = createSlice({
+  name: "searchModal",
+  initialState,
   reducers: {
-    // Reducers for individual chat operations
-    renameChat: (state, action: PayloadAction<{ id: string; newName: string }>) => {
-      const { id, newName } = action.payload;
-      // Update the normalized entity
-      chatAdapter.updateOne(state, { id, changes: { name: newName } });
-      // After updating a chat, re-categorize the data from the entire normalized state
-      // to reflect changes in the categorized UI view.
-      state.categories = categorizeChats(chatAdapter.getSelectors().selectAll(state));
+    setQuery(state, action: PayloadAction<string>) {
+      state.query = action.payload;
     },
-    deleteChat: (state, action: PayloadAction<string>) => {
-      const idToDelete = action.payload;
-      // Remove the normalized entity
-      chatAdapter.removeOne(state, idToDelete);
-      // After deleting a chat, re-categorize the data from the entire normalized state
-      // to reflect changes in the categorized UI view.
-      state.categories = categorizeChats(chatAdapter.getSelectors().selectAll(state));
+    clearResults(state) {
+      state.results = [];
+      state.error = null;
     },
   },
   extraReducers: (builder) => {
     builder
-      .addCase(fetchChatHistory.pending, (state) => {
-        state.status = 'loading';
+      .addCase(searchSessions.pending, (state) => {
+        state.loading = true;
+        state.error = null;
       })
-      .addCase(fetchChatHistory.fulfilled, (state, action: PayloadAction<ChatCategory[]>) => {
-        state.status = 'succeeded';
-        const incomingCategorizedData = action.payload;
-
-        // Extract all individual chat items from the categorized data
-        const allChatsFlat: Chat[] = [];
-        incomingCategorizedData.forEach(categoryGroup => {
-          allChatsFlat.push(...categoryGroup.chatList);
-        });
-
-        // Add all fetched chats to the normalized state using the adapter.
-        // This is crucial for renameChat/deleteChat to work on individual items.
-        chatAdapter.setAll(state, allChatsFlat);
-
-        // Directly store the categorized data from the API response
-        state.categories = incomingCategorizedData;
+      .addCase(searchSessions.fulfilled, (state, action: PayloadAction<Session[]>) => {
+        state.loading = false;
+        state.results = action.payload;
       })
-      .addCase(fetchChatHistory.rejected, (state, action) => {
-        state.status = 'failed';
-        // Redux Toolkit's createAsyncThunk action.error.message is typed as string | undefined,
-        // so we can safely assign it or default to a generic message.
-        state.error = action.error.message || 'An unknown error occurred';
+      .addCase(searchSessions.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload as string;
       });
   },
 });
 
-export const { renameChat, deleteChat } = chatSlice.actions;
+export const { setQuery, clearResults } = searchModalSlice.actions;
+export default searchModalSlice.reducer;
 
-// Export selectors from the adapter for individual chat access (by ID)
-export const {
-  selectAll: selectAllNormalizedChats, // For internal use if needed (e.g., re-categorizing)
-  selectById: selectChatById, // Used by ChatItem to get its specific data
-} = chatAdapter.getSelectors((state: { chats: ChatsState & ReturnType<typeof chatAdapter.getInitialState> }) => state.chats);
 
-// New selector for the categorized chat list, used by ChatHistoryAccordion
-export const selectCategorizedChats = (state: { chats: ChatsState }) => state.chats.categories;
 
-export default chatSlice.reducer;
+  const dispatch = useDispatch<AppDispatch>();
+  const { query, results, loading, error } = useSelector(
+    (state: RootState) => state.searchModal
+  );
+
+  const [localInput, setLocalInput] = useState<string>(query);
+
+  // Debounce input
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      if (localInput.trim()) {
+        dispatch(setQuery(localInput));
+        dispatch(searchSessions(localInput));
+      } else {
+        dispatch(clearResults());
+      }
+    }, 500);
+
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [localInput, dispatch]);
+
