@@ -1,140 +1,60 @@
-// features/interaction/interactionSlice.ts
-import {
-  createSlice,
-  createAsyncThunk,
-  createEntityAdapter,
-  PayloadAction,
-} from "@reduxjs/toolkit";
-import { RootState } from "../../app/store";
-import {
-  fetchInteractionsAPI,
-  sendMessageAPI,
-} from "../../services/api";
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import List
+import os
+import mlflow
+from mlflow.tracking import MlflowClient
 
-// 🔹 Interaction type
-export interface Interaction {
-  interactionId: string;
-  sessionId: string;
-  userMessage: string;
-  botMessage: string;
-}
+# =============================
+# 1. Set up connection to Databricks
+# =============================
 
-// 🔹 Entity adapter
-const interactionsAdapter = createEntityAdapter<Interaction>({
-  selectId: (i) => i.interactionId,
-  sortComparer: (a, b) => a.interactionId.localeCompare(b.interactionId),
-});
+# Make sure these are stored in environment variables for security
+DATABRICKS_HOST = os.getenv("DATABRICKS_HOST", "https://adb-1234567890123456.9.azuredatabricks.net")
+DATABRICKS_TOKEN = os.getenv("DATABRICKS_TOKEN", "your-token-here")
+EXPERIMENT_ID = os.getenv("DATABRICKS_EXPERIMENT_ID", "1234567890123456")
 
-// 🔹 Async thunks
-export const fetchInteractions = createAsyncThunk(
-  "interactions/fetch",
-  async (sessionId: string) => {
-    return await fetchInteractionsAPI(sessionId);
-  }
-);
+mlflow.set_tracking_uri(f"{DATABRICKS_HOST}")
+os.environ["DATABRICKS_HOST"] = DATABRICKS_HOST
+os.environ["DATABRICKS_TOKEN"] = DATABRICKS_TOKEN
 
-export const sendMessage = createAsyncThunk(
-  "interactions/sendMessage",
-  async (
-    { sessionId, userMessage }: { sessionId: string; userMessage: string },
-    { rejectWithValue }
-  ) => {
-    try {
-      const newInteraction = await sendMessageAPI(sessionId, userMessage);
-      return newInteraction;
-    } catch (err) {
-      return rejectWithValue(err);
-    }
-  }
-);
+client = MlflowClient()
 
-// 🔹 Slice state
-interface InteractionState {
-  activeSessionId: string | null;
-  interactionsBySession: Record<string, string[]>; // map sessionId -> [interactionIds]
-  loading: boolean;
-}
+# =============================
+# 2. FastAPI App
+# =============================
+app = FastAPI()
 
-const initialState = interactionsAdapter.getInitialState<InteractionState>({
-  activeSessionId: null,
-  interactionsBySession: {},
-  loading: false,
-});
+class TraceRequest(BaseModel):
+    trace_ids: List[str]
 
-const interactionSlice = createSlice({
-  name: "interactions",
-  initialState,
-  reducers: {
-    setActiveSessionId(state, action: PayloadAction<string | null>) {
-      state.activeSessionId = action.payload;
-    },
-    clearSessionInteractions(state, action: PayloadAction<string>) {
-      const sessionId = action.payload;
-      const ids = state.interactionsBySession[sessionId] || [];
-      interactionsAdapter.removeMany(state, ids);
-      delete state.interactionsBySession[sessionId];
-    },
-  },
-  extraReducers: (builder) => {
-    builder
-      // Fetch interactions
-      .addCase(fetchInteractions.pending, (state) => {
-        state.loading = true;
-      })
-      .addCase(fetchInteractions.fulfilled, (state, action) => {
-        const sessionId = action.meta.arg;
-        interactionsAdapter.upsertMany(state, action.payload);
+@app.post("/get-trace-details/")
+def get_trace_details(request: TraceRequest):
+    try:
+        # Build single filter string with OR conditions
+        filter_conditions = " OR ".join([f"tags.trace_id = '{tid}'" for tid in request.trace_ids])
 
-        // map sessionId -> interactionIds
-        state.interactionsBySession[sessionId] = action.payload.map(
-          (i: Interaction) => i.interactionId
-        );
-        state.loading = false;
-      })
-      .addCase(fetchInteractions.rejected, (state) => {
-        state.loading = false;
-      })
-      // Send message
-      .addCase(sendMessage.fulfilled, (state, action) => {
-        const interaction = action.payload;
-        interactionsAdapter.addOne(state, interaction);
+        runs = client.search_runs(
+            experiment_ids=[EXPERIMENT_ID],
+            filter_string=filter_conditions,
+            max_results=1000
+        )
 
-        if (!state.interactionsBySession[interaction.sessionId]) {
-          state.interactionsBySession[interaction.sessionId] = [];
-        }
-        state.interactionsBySession[interaction.sessionId].push(
-          interaction.interactionId
-        );
-      });
-  },
-});
+        results = []
+        for run in runs:
+            trace_id = run.data.tags.get("trace_id")
+            details = {
+                "trace_id": trace_id,
+                "run_id": run.info.run_id,
+                "message": run.data.params.get("message"),
+                "conversation": run.data.params.get("conversation"),
+                "feedback": run.data.params.get("feedback"),
+                "metrics": run.data.metrics,
+                "tags": run.data.tags
+            }
+            results.append(details)
 
-export const { setActiveSessionId, clearSessionInteractions } =
-  interactionSlice.actions;
+        return {"status": "success", "data": results}
 
-// 🔹 Selectors
-export const {
-  selectAll: selectAllInteractions,
-  selectById: selectInteractionById,
-} = interactionsAdapter.getSelectors((state: RootState) => state.interactions);
-
-export const selectActiveSessionId = (state: RootState) =>
-  state.interactions.activeSessionId;
-
-export const selectInteractionsForActiveSession = (state: RootState) => {
-  const sessionId = state.interactions.activeSessionId;
-  if (!sessionId) return [];
-  const ids = state.interactions.interactionsBySession[sessionId] || [];
-  return ids.map((id) => selectInteractionById(state, id));
-};
-
-export default interactionSlice.reducer;
-import {
-  sendMessage,
-  selectInteractionsForActiveSession,
-} from "../features/interaction/interactionSlice";
-
-function ChatWindow() {
-  const dispatch = useAppDispatch();
-  const interactions = useAppSelector(selectInteractionsForActiveSession);
-
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
