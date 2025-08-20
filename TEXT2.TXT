@@ -58,3 +58,43 @@ def get_trace_details(request: TraceRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
+def extract_messages(json_obj):
+    results = {
+        "all_messages": [],
+        "assistant_messages": []
+    }
+
+    # Validate message key
+    messages = json_obj.get("message")
+    if not messages or not isinstance(messages, list):
+        return results  # empty return if nothing found
+
+    for item in messages:
+        # Validate required fields
+        role = item.get("role")
+        content = item.get("content")
+
+        if content:  # if content exists, store it
+            results["all_messages"].append(content)
+
+        # Special case: assistant messages
+        if role == "assistant" and content:
+            results["assistant_messages"].append(content)
+
+    return results
+
+
+# Example usage
+example_json = {
+    "message": [
+        {"role": "user", "content": "Hello", "id": "1"},
+        {"role": "assistant", "content": "Hi there!", "id": "2"},
+        {"role": "assistant", "id": "3"}  # missing content
+    ]
+}
+
+print(extract_messages(example_json))
