@@ -1,9 +1,15 @@
-// hooks/useExport.js
+// hooks/useExport.ts
 import { useCallback } from "react";
+
+type ExportOptions = {
+  text?: string;
+  base64?: string;
+  filename?: string;
+};
 
 export function useExport() {
   // 📌 Helper: Convert base64 to Blob
-  const base64ToBlob = (base64, type = "application/octet-stream") => {
+  const base64ToBlob = (base64: string, type = "application/octet-stream"): Blob => {
     const byteCharacters = atob(base64);
     const byteNumbers = new Array(byteCharacters.length);
     for (let i = 0; i < byteCharacters.length; i++) {
@@ -15,24 +21,22 @@ export function useExport() {
 
   // 📌 Export to PDF
   const exportToPDF = useCallback(
-    async ({ text, base64, filename = "export.pdf" }) => {
+    async ({ text, base64, filename = "export.pdf" }: ExportOptions): Promise<void> => {
       const { saveAs } = await import("file-saver");
 
       if (base64) {
-        // Use Base64 if available
         const blob = base64ToBlob(base64, "application/pdf");
         saveAs(blob, filename);
         return;
       }
 
       if (text) {
-        // Otherwise generate PDF from text
         const { PDFDocument } = await import("pdf-lib");
         const pdfDoc = await PDFDocument.create();
         const page = pdfDoc.addPage([600, 400]);
         page.drawText(text, { x: 50, y: 350, size: 16 });
         const pdfBytes = await pdfDoc.save();
-        saveAs(new Blob([pdfBytes]), filename);
+        saveAs(new Blob([pdfBytes], { type: "application/pdf" }), filename);
       }
     },
     []
@@ -40,11 +44,10 @@ export function useExport() {
 
   // 📌 Export to Word
   const exportToWord = useCallback(
-    async ({ text, base64, filename = "export.docx" }) => {
+    async ({ text, base64, filename = "export.docx" }: ExportOptions): Promise<void> => {
       const { saveAs } = await import("file-saver");
 
       if (base64) {
-        // Use Base64 if available
         const blob = base64ToBlob(
           base64,
           "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -54,7 +57,6 @@ export function useExport() {
       }
 
       if (text) {
-        // Otherwise generate Word from text
         const docx = await import("docx");
         const { Document, Packer, Paragraph } = docx;
 
