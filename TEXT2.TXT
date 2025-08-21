@@ -78,3 +78,5 @@ export function useExport() {
 
   return { exportToPDF, exportToWord };
 }
+
+Subham has good understanding and expertise in React, Node.js, and JavaScript. He cleared the coding round in React successfully and was also able to explain REST API implementation along with SQL integration using Node. His experience with Python is minimal, and he cleared the Python coding round with some hints. He has average expertise in Django but managed to answer basic questions. Additionally, he could explain concepts related to Azure Cloud and other related areas with reasonable clarity. Considering his strong performance in JavaScript and React, I would like to recommend him to the next round for further evaluation
