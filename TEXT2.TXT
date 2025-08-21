@@ -1,100 +1,78 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from typing import List
-import os
-import mlflow
-from mlflow.tracking import MlflowClient
+// hooks/useExport.js
+import { useCallback } from "react";
 
-# =============================
-# 1. Set up connection to Databricks
-# =============================
-
-# Make sure these are stored in environment variables for security
-DATABRICKS_HOST = os.getenv("DATABRICKS_HOST", "https://adb-1234567890123456.9.azuredatabricks.net")
-DATABRICKS_TOKEN = os.getenv("DATABRICKS_TOKEN", "your-token-here")
-EXPERIMENT_ID = os.getenv("DATABRICKS_EXPERIMENT_ID", "1234567890123456")
-
-mlflow.set_tracking_uri(f"{DATABRICKS_HOST}")
-os.environ["DATABRICKS_HOST"] = DATABRICKS_HOST
-os.environ["DATABRICKS_TOKEN"] = DATABRICKS_TOKEN
-
-client = MlflowClient()
-
-# =============================
-# 2. FastAPI App
-# =============================
-app = FastAPI()
-
-class TraceRequest(BaseModel):
-    trace_ids: List[str]
-
-@app.post("/get-trace-details/")
-def get_trace_details(request: TraceRequest):
-    try:
-        # Build single filter string with OR conditions
-        filter_conditions = " OR ".join([f"tags.trace_id = '{tid}'" for tid in request.trace_ids])
-
-        runs = client.search_runs(
-            experiment_ids=[EXPERIMENT_ID],
-            filter_string=filter_conditions,
-            max_results=1000
-        )
-
-        results = []
-        for run in runs:
-            trace_id = run.data.tags.get("trace_id")
-            details = {
-                "trace_id": trace_id,
-                "run_id": run.info.run_id,
-                "message": run.data.params.get("message"),
-                "conversation": run.data.params.get("conversation"),
-                "feedback": run.data.params.get("feedback"),
-                "metrics": run.data.metrics,
-                "tags": run.data.tags
-            }
-            results.append(details)
-
-        return {"status": "success", "data": results}
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-
-
-def extract_messages(json_obj):
-    results = {
-        "all_messages": [],
-        "assistant_messages": []
+export function useExport() {
+  // 📌 Helper: Convert base64 to Blob
+  const base64ToBlob = (base64, type = "application/octet-stream") => {
+    const byteCharacters = atob(base64);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i);
     }
+    const byteArray = new Uint8Array(byteNumbers);
+    return new Blob([byteArray], { type });
+  };
 
-    # Validate message key
-    messages = json_obj.get("message")
-    if not messages or not isinstance(messages, list):
-        return results  # empty return if nothing found
+  // 📌 Export to PDF
+  const exportToPDF = useCallback(
+    async ({ text, base64, filename = "export.pdf" }) => {
+      const { saveAs } = await import("file-saver");
 
-    for item in messages:
-        # Validate required fields
-        role = item.get("role")
-        content = item.get("content")
+      if (base64) {
+        // Use Base64 if available
+        const blob = base64ToBlob(base64, "application/pdf");
+        saveAs(blob, filename);
+        return;
+      }
 
-        if content:  # if content exists, store it
-            results["all_messages"].append(content)
+      if (text) {
+        // Otherwise generate PDF from text
+        const { PDFDocument } = await import("pdf-lib");
+        const pdfDoc = await PDFDocument.create();
+        const page = pdfDoc.addPage([600, 400]);
+        page.drawText(text, { x: 50, y: 350, size: 16 });
+        const pdfBytes = await pdfDoc.save();
+        saveAs(new Blob([pdfBytes]), filename);
+      }
+    },
+    []
+  );
 
-        # Special case: assistant messages
-        if role == "assistant" and content:
-            results["assistant_messages"].append(content)
+  // 📌 Export to Word
+  const exportToWord = useCallback(
+    async ({ text, base64, filename = "export.docx" }) => {
+      const { saveAs } = await import("file-saver");
 
-    return results
+      if (base64) {
+        // Use Base64 if available
+        const blob = base64ToBlob(
+          base64,
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        );
+        saveAs(blob, filename);
+        return;
+      }
 
+      if (text) {
+        // Otherwise generate Word from text
+        const docx = await import("docx");
+        const { Document, Packer, Paragraph } = docx;
 
-# Example usage
-example_json = {
-    "message": [
-        {"role": "user", "content": "Hello", "id": "1"},
-        {"role": "assistant", "content": "Hi there!", "id": "2"},
-        {"role": "assistant", "id": "3"}  # missing content
-    ]
+        const doc = new Document({
+          sections: [
+            {
+              properties: {},
+              children: [new Paragraph(text)],
+            },
+          ],
+        });
+
+        const blob = await Packer.toBlob(doc);
+        saveAs(blob, filename);
+      }
+    },
+    []
+  );
+
+  return { exportToPDF, exportToWord };
 }
-
-print(extract_messages(example_json))
