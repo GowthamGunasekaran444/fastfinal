@@ -1,82 +1,53 @@
-// hooks/useExport.ts
-import { useCallback } from "react";
+// vite.config.js
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import { visualizer } from "rollup-plugin-visualizer";
 
-type ExportOptions = {
-  text?: string;
-  base64?: string;
-  filename?: string;
-};
-
-export function useExport() {
-  // 📌 Helper: Convert base64 to Blob
-  const base64ToBlob = (base64: string, type = "application/octet-stream"): Blob => {
-    const byteCharacters = atob(base64);
-    const byteNumbers = new Array(byteCharacters.length);
-    for (let i = 0; i < byteCharacters.length; i++) {
-      byteNumbers[i] = byteCharacters.charCodeAt(i);
+export default defineConfig({
+  plugins: [
+    react(),
+    visualizer({
+      open: true, // opens bundle analysis after build
+      filename: "bundle-report.html"
+    })
+  ],
+  optimizeDeps: {
+    include: [
+      "axios",
+      "redux",
+      "@reduxjs/toolkit",
+      "redux-persist",
+      "react-redux",
+      "react-markdown",
+      "file-saver",
+      "jwt-decode",
+      "@azure/msal-browser",
+      "@azure/msal-react"
+    ],
+    exclude: [
+      "echarts",
+      "echarts-for-react",
+      "vchart",
+      "pdf-lib",   // or "jspdf"
+      "@mui/material",
+      "@mui/icons-material",
+      "@emotion/react",
+      "@emotion/styled"
+    ]
+  },
+  build: {
+    chunkSizeWarningLimit: 1200,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          react: ["react", "react-dom", "react-router-dom"],
+          redux: ["redux", "react-redux", "@reduxjs/toolkit", "redux-persist"],
+          mui: ["@mui/material", "@mui/icons-material", "@emotion/react", "@emotion/styled"],
+          auth: ["@azure/msal-browser", "@azure/msal-react", "jwt-decode"],
+          charts: ["echarts", "echarts-for-react", "vchart"],
+          pdf: ["pdf-lib", "file-saver", "react-markdown"]
+        }
+      }
     }
-    const byteArray = new Uint8Array(byteNumbers);
-    return new Blob([byteArray], { type });
-  };
-
-  // 📌 Export to PDF
-  const exportToPDF = useCallback(
-    async ({ text, base64, filename = "export.pdf" }: ExportOptions): Promise<void> => {
-      const { saveAs } = await import("file-saver");
-
-      if (base64) {
-        const blob = base64ToBlob(base64, "application/pdf");
-        saveAs(blob, filename);
-        return;
-      }
-
-      if (text) {
-        const { PDFDocument } = await import("pdf-lib");
-        const pdfDoc = await PDFDocument.create();
-        const page = pdfDoc.addPage([600, 400]);
-        page.drawText(text, { x: 50, y: 350, size: 16 });
-        const pdfBytes = await pdfDoc.save();
-        saveAs(new Blob([pdfBytes], { type: "application/pdf" }), filename);
-      }
-    },
-    []
-  );
-
-  // 📌 Export to Word
-  const exportToWord = useCallback(
-    async ({ text, base64, filename = "export.docx" }: ExportOptions): Promise<void> => {
-      const { saveAs } = await import("file-saver");
-
-      if (base64) {
-        const blob = base64ToBlob(
-          base64,
-          "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        );
-        saveAs(blob, filename);
-        return;
-      }
-
-      if (text) {
-        const docx = await import("docx");
-        const { Document, Packer, Paragraph } = docx;
-
-        const doc = new Document({
-          sections: [
-            {
-              properties: {},
-              children: [new Paragraph(text)],
-            },
-          ],
-        });
-
-        const blob = await Packer.toBlob(doc);
-        saveAs(blob, filename);
-      }
-    },
-    []
-  );
-
-  return { exportToPDF, exportToWord };
-}
-
-Subham has good understanding and expertise in React, Node.js, and JavaScript. He cleared the coding round in React successfully and was also able to explain REST API implementation along with SQL integration using Node. His experience with Python is minimal, and he cleared the Python coding round with some hints. He has average expertise in Django but managed to answer basic questions. Additionally, he could explain concepts related to Azure Cloud and other related areas with reasonable clarity. Considering his strong performance in JavaScript and React, I would like to recommend him to the next round for further evaluation
+  }
+});
