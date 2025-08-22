@@ -1,30 +1,17 @@
-// utils/dateAndMarkdown.ts
+export type DateRange = { startDate: string; endDate: string };
 
-export type DateRange = {
-  startDate: string; // formatted as MM-DD-YYYY
-  endDate: string;
-};
-
-/**
- * Helper to format Date into MM-DD-YYYY
- */
 function formatDate(date: Date): string {
-  const mm = String(date.getMonth() + 1).padStart(2, "0");
-  const dd = String(date.getDate()).padStart(2, "0");
-  const yyyy = date.getFullYear();
+  const mm: string = String(date.getMonth() + 1).padStart(2, "0");
+  const dd: string = String(date.getDate()).padStart(2, "0");
+  const yyyy: number = date.getFullYear();
   return `${mm}-${dd}-${yyyy}`;
 }
 
-/**
- * Get a date range based on keyword like "last month", "last 3 months", etc.
- */
 export function getDateRange(range: string): DateRange {
-  const today = new Date();
-  const endDate = new Date(today); // copy
-
-  const startDate = new Date(today);
-
-  switch (range.toLowerCase()) {
+  const today: Date = new Date();
+  const endDate: Date = new Date(today);
+  const startDate: Date = new Date(today);
+  switch (range.trim().toLowerCase()) {
     case "last month":
       startDate.setMonth(startDate.getMonth() - 1);
       break;
@@ -40,42 +27,45 @@ export function getDateRange(range: string): DateRange {
     default:
       throw new Error(`Invalid range: ${range}`);
   }
-
   return { startDate: formatDate(startDate), endDate: formatDate(endDate) };
 }
 
-/**
- * Convert a markdown table string into JSON array of objects.
- */
 export function markdownTableToJSON(md: string): Record<string, string>[] {
-  const lines = md.trim().split("\n");
-
-  if (lines.length < 2) {
-    throw new Error("Invalid markdown table: missing header or rows");
-  }
-
-  // Extract header row
-  const headers = lines[0]
-    .split("|")
-    .map(h => h.trim())
-    .filter(Boolean);
-
-  // Skip the separator row (line[1]) and process data rows
-  const rows = lines.slice(2);
-
-  const data = rows.map(line => {
-    const cells = line
-      .split("|")
-      .map(c => c.trim())
-      .filter(Boolean);
-
+  const lines: string[] = md.trim().split("\n");
+  if (lines.length < 2) throw new Error("Invalid markdown table");
+  const headers: string[] = lines[0].split("|").map((h: string) => h.trim()).filter(Boolean);
+  const rows: string[] = lines.slice(2);
+  return rows.map((line: string) => {
+    const cells: string[] = line.split("|").map((c: string) => c.trim()).filter(Boolean);
     const row: Record<string, string> = {};
-    headers.forEach((h, i) => {
-      row[h] = cells[i] ?? "";
-    });
-
+    headers.forEach((h: string, i: number) => (row[h] = cells[i] ?? ""));
     return row;
   });
+}
 
-  return data;
+export function markdownTableToCSV(md: string): string {
+  const lines: string[] = md.trim().split("\n");
+  if (lines.length < 2) throw new Error("Invalid markdown table");
+  const headers: string[] = lines[0].split("|").map((h: string) => h.trim()).filter(Boolean);
+  const rows: string[] = lines.slice(2);
+  const csvLines: string[] = [headers.join(",")];
+  rows.forEach((line: string) => {
+    const cells: string[] = line.split("|").map((c: string) => c.trim()).filter(Boolean);
+    csvLines.push(cells.join(","));
+  });
+  return csvLines.join("\n");
+}
+
+export function downloadMarkdownAsCSV(md: string, filename: string = "data.csv"): void {
+  const csvContent: string = markdownTableToCSV(md);
+  const blob: Blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const url: string = URL.createObjectURL(blob);
+  const a: HTMLAnchorElement = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
