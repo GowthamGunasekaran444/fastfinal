@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import React, { useCallback } from "react";
 import { saveAs } from "file-saver";
 
 type ExportType = "pdf" | "word";
@@ -11,48 +11,52 @@ interface ExportOptions {
 }
 
 export function useExportFile() {
-  const exportFile = useCallback(async ({ text, images = [], type, fileName = "export" }: ExportOptions) => {
-    if (type === "pdf") {
-      // ⚡ Dynamic import → loads only when user exports as PDF
-      const { pdf, Document, Page, Text, Image, StyleSheet } = await import("@react-pdf/renderer");
+  const exportFile = useCallback(
+    async ({ text, images = [], type, fileName = "export" }: ExportOptions) => {
+      if (type === "pdf") {
+        // Dynamic import → loads only when user exports as PDF
+        const pdfLib = await import("@react-pdf/renderer");
+        const { pdf, Document, Page, Text, Image, StyleSheet } = pdfLib;
 
-      // define PDF styles
-      const styles = StyleSheet.create({
-        page: { flexDirection: "column", padding: 20 },
-        section: { margin: 10, fontSize: 14 },
-        image: { width: 200, height: 200, marginTop: 10 }
-      });
+        // define PDF styles
+        const styles = StyleSheet.create({
+          page: { flexDirection: "column", padding: 20 },
+          section: { margin: 10, fontSize: 14 },
+          image: { width: 200, height: 200, marginTop: 10 },
+        });
 
-      // create PDF document
-      const MyDocument = (
-        <Document>
-          <Page size="A4" style={styles.page}>
-            <Text style={styles.section}>{text}</Text>
-            {images.map((img, i) => (
-              <Image key={i} style={styles.image} src={img} />
-            ))}
-          </Page>
-        </Document>
-      );
+        // create PDF document
+        const MyDocument = (
+          <Document>
+            <Page size="A4" style={styles.page}>
+              <Text style={styles.section}>{text}</Text>
+              {images.map((img, i) => (
+                <Image key={i} style={styles.image} src={img} />
+              ))}
+            </Page>
+          </Document>
+        );
 
-      // generate blob & save
-      const blob = await pdf(MyDocument).toBlob();
-      saveAs(blob, `${fileName}.pdf`);
-    } else {
-      // ⚡ Dynamic import → loads only when user exports as Word
-      const htmlDocx = (await import("html-docx-js/dist/html-docx")).default;
+        // generate blob & save
+        const blob = await pdf(MyDocument).toBlob();
+        saveAs(blob, `${fileName}.pdf`);
+      } else {
+        // Dynamic import → loads only when user exports as Word
+        const htmlDocx = (await import("html-docx-js/dist/html-docx")).default;
 
-      // create HTML content
-      let htmlContent = `<p>${text}</p>`;
-      images.forEach((img) => {
-        htmlContent += `<img src="${img}" style="width:200px;height:auto;margin-top:10px;" />`;
-      });
+        // create HTML content
+        let htmlContent = `<p>${text}</p>`;
+        images.forEach((img) => {
+          htmlContent += `<img src="${img}" style="width:200px;height:auto;margin-top:10px;" />`;
+        });
 
-      // convert to docx blob & save
-      const doc = htmlDocx.asBlob(htmlContent);
-      saveAs(doc, `${fileName}.docx`);
-    }
-  }, []);
+        // convert to docx blob & save
+        const doc = htmlDocx.asBlob(htmlContent);
+        saveAs(doc, `${fileName}.docx`);
+      }
+    },
+    []
+  );
 
   return { exportFile };
 }
