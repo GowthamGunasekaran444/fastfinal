@@ -1,62 +1,88 @@
-import React, { useCallback } from "react";
+import React from "react";
 import { saveAs } from "file-saver";
 
 type ExportType = "pdf" | "word";
 
 interface ExportOptions {
   text: string;
-  images?: string[];     // base64 image array
-  type: ExportType;      // "pdf" or "word"
-  fileName?: string;     // default name for file
+  images?: string[];
+  type: ExportType;
+  fileName?: string;
 }
+
+export const exportFileService = async ({
+  text,
+  images = [],
+  type,
+  fileName = "export",
+}: ExportOptions) => {
+  if (type === "pdf") {
+    // Dynamic import @react-pdf/renderer
+    const pdfLib = await import("@react-pdf/renderer");
+    const { pdf, Document, Page, Text, Image, StyleSheet } =
+      pdfLib as typeof import("@react-pdf/renderer");
+
+    const styles = StyleSheet.create({
+      page: { flexDirection: "column", padding: 20 },
+      section: { margin: 10, fontSize: 14 },
+      image: { width: 200, height: 200, marginTop: 10 },
+    });
+
+    const MyDocument = (
+      <Document>
+        <Page size="A4" style={styles.page}>
+          <Text style={styles.section}>{text}</Text>
+          {images.map((img, i) => (
+            <Image key={i} style={styles.image} src={img} />
+          ))}
+        </Page>
+      </Document>
+    );
+
+    const blob = await pdf(MyDocument).toBlob();
+    saveAs(blob, `${fileName}.pdf`);
+  } else {
+    // Dynamic import html-docx-js
+    const htmlDocx = (await import("html-docx-js/dist/html-docx")).default;
+
+    let htmlContent = `<p>${text}</p>`;
+    images.forEach((img) => {
+      htmlContent += `<img src="${img}" style="width:200px;height:auto;margin-top:10px;" />`;
+    });
+
+    const doc = htmlDocx.asBlob(htmlContent);
+    saveAs(doc, `${fileName}.docx`);
+  }
+};
+
+
+
+
+import { useCallback } from "react";
+import type { ExportOptions } from "../services/exportService";
 
 export function useExportFile() {
   const exportFile = useCallback(
-    async ({ text, images = [], type, fileName = "export" }: ExportOptions) => {
-      if (type === "pdf") {
-        // Dynamic import → loads only when user exports as PDF
-        const pdfLib = await import("@react-pdf/renderer");
-        const { pdf, Document, Page, Text, Image, StyleSheet } = pdfLib;
-
-        // define PDF styles
-        const styles = StyleSheet.create({
-          page: { flexDirection: "column", padding: 20 },
-          section: { margin: 10, fontSize: 14 },
-          image: { width: 200, height: 200, marginTop: 10 },
-        });
-
-        // create PDF document
-        const MyDocument = (
-          <Document>
-            <Page size="A4" style={styles.page}>
-              <Text style={styles.section}>{text}</Text>
-              {images.map((img, i) => (
-                <Image key={i} style={styles.image} src={img} />
-              ))}
-            </Page>
-          </Document>
-        );
-
-        // generate blob & save
-        const blob = await pdf(MyDocument).toBlob();
-        saveAs(blob, `${fileName}.pdf`);
-      } else {
-        // Dynamic import → loads only when user exports as Word
-        const htmlDocx = (await import("html-docx-js/dist/html-docx")).default;
-
-        // create HTML content
-        let htmlContent = `<p>${text}</p>`;
-        images.forEach((img) => {
-          htmlContent += `<img src="${img}" style="width:200px;height:auto;margin-top:10px;" />`;
-        });
-
-        // convert to docx blob & save
-        const doc = htmlDocx.asBlob(htmlContent);
-        saveAs(doc, `${fileName}.docx`);
-      }
+    async (options: ExportOptions) => {
+      // Dynamically import the heavy service module only when needed
+      const { exportFileService } = await import("../services/exportService");
+      await exportFileService(options);
     },
     []
   );
 
   return { exportFile };
+}
+src/types/html-docx-js.d.ts
+ts
+Copy
+Edit
+// Declare module so TypeScript knows about html-docx-js
+declare module "html-docx-js/dist/html-docx" {
+  export interface HtmlDocx {
+    asBlob(html: string, options?: { orientation?: "portrait" | "landscape" }): Blob;
+    asDataURI?(html: string): string;
+  }
+  const htmlDocx: HtmlDocx;
+  export default htmlDocx;
 }
