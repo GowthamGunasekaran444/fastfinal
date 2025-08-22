@@ -1,88 +1,81 @@
-import React from "react";
-import { saveAs } from "file-saver";
+// utils/dateAndMarkdown.ts
 
-type ExportType = "pdf" | "word";
-
-interface ExportOptions {
-  text: string;
-  images?: string[];
-  type: ExportType;
-  fileName?: string;
-}
-
-export const exportFileService = async ({
-  text,
-  images = [],
-  type,
-  fileName = "export",
-}: ExportOptions) => {
-  if (type === "pdf") {
-    // Dynamic import @react-pdf/renderer
-    const pdfLib = await import("@react-pdf/renderer");
-    const { pdf, Document, Page, Text, Image, StyleSheet } =
-      pdfLib as typeof import("@react-pdf/renderer");
-
-    const styles = StyleSheet.create({
-      page: { flexDirection: "column", padding: 20 },
-      section: { margin: 10, fontSize: 14 },
-      image: { width: 200, height: 200, marginTop: 10 },
-    });
-
-    const MyDocument = (
-      <Document>
-        <Page size="A4" style={styles.page}>
-          <Text style={styles.section}>{text}</Text>
-          {images.map((img, i) => (
-            <Image key={i} style={styles.image} src={img} />
-          ))}
-        </Page>
-      </Document>
-    );
-
-    const blob = await pdf(MyDocument).toBlob();
-    saveAs(blob, `${fileName}.pdf`);
-  } else {
-    // Dynamic import html-docx-js
-    const htmlDocx = (await import("html-docx-js/dist/html-docx")).default;
-
-    let htmlContent = `<p>${text}</p>`;
-    images.forEach((img) => {
-      htmlContent += `<img src="${img}" style="width:200px;height:auto;margin-top:10px;" />`;
-    });
-
-    const doc = htmlDocx.asBlob(htmlContent);
-    saveAs(doc, `${fileName}.docx`);
-  }
+export type DateRange = {
+  startDate: string; // formatted as MM-DD-YYYY
+  endDate: string;
 };
 
-
-
-
-import { useCallback } from "react";
-import type { ExportOptions } from "../services/exportService";
-
-export function useExportFile() {
-  const exportFile = useCallback(
-    async (options: ExportOptions) => {
-      // Dynamically import the heavy service module only when needed
-      const { exportFileService } = await import("../services/exportService");
-      await exportFileService(options);
-    },
-    []
-  );
-
-  return { exportFile };
+/**
+ * Helper to format Date into MM-DD-YYYY
+ */
+function formatDate(date: Date): string {
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  const yyyy = date.getFullYear();
+  return `${mm}-${dd}-${yyyy}`;
 }
-src/types/html-docx-js.d.ts
-ts
-Copy
-Edit
-// Declare module so TypeScript knows about html-docx-js
-declare module "html-docx-js/dist/html-docx" {
-  export interface HtmlDocx {
-    asBlob(html: string, options?: { orientation?: "portrait" | "landscape" }): Blob;
-    asDataURI?(html: string): string;
+
+/**
+ * Get a date range based on keyword like "last month", "last 3 months", etc.
+ */
+export function getDateRange(range: string): DateRange {
+  const today = new Date();
+  const endDate = new Date(today); // copy
+
+  const startDate = new Date(today);
+
+  switch (range.toLowerCase()) {
+    case "last month":
+      startDate.setMonth(startDate.getMonth() - 1);
+      break;
+    case "last 3 months":
+      startDate.setMonth(startDate.getMonth() - 3);
+      break;
+    case "last 6 months":
+      startDate.setMonth(startDate.getMonth() - 6);
+      break;
+    case "last year":
+      startDate.setFullYear(startDate.getFullYear() - 1);
+      break;
+    default:
+      throw new Error(`Invalid range: ${range}`);
   }
-  const htmlDocx: HtmlDocx;
-  export default htmlDocx;
+
+  return { startDate: formatDate(startDate), endDate: formatDate(endDate) };
+}
+
+/**
+ * Convert a markdown table string into JSON array of objects.
+ */
+export function markdownTableToJSON(md: string): Record<string, string>[] {
+  const lines = md.trim().split("\n");
+
+  if (lines.length < 2) {
+    throw new Error("Invalid markdown table: missing header or rows");
+  }
+
+  // Extract header row
+  const headers = lines[0]
+    .split("|")
+    .map(h => h.trim())
+    .filter(Boolean);
+
+  // Skip the separator row (line[1]) and process data rows
+  const rows = lines.slice(2);
+
+  const data = rows.map(line => {
+    const cells = line
+      .split("|")
+      .map(c => c.trim())
+      .filter(Boolean);
+
+    const row: Record<string, string> = {};
+    headers.forEach((h, i) => {
+      row[h] = cells[i] ?? "";
+    });
+
+    return row;
+  });
+
+  return data;
 }
