@@ -1,0 +1,205 @@
+import React, { useRef } from "react";
+import ChartContainer from "./ChartContainer";
+
+function App(): JSX.Element {
+  const chartRef = useRef(null);
+
+  const exportImage = () => {
+    const base64 = chartRef.current?.exportChartToBase64();
+    debugger;
+    console.log("Base64 Image:", base64);
+  };
+
+  return (
+    <div>
+      <ChartContainer ref={chartRef} />
+      <button onClick={exportImage}>Export Chart as Image</button>
+    </div>
+  );
+}
+
+export default App;
+
+
+import React, {
+  useState,
+  useRef,
+  useImperativeHandle,
+  forwardRef,
+  Suspense,
+  lazy,
+  useCallback,
+  memo,
+} from "react";
+import { Box, Skeleton, ButtonGroup, Button } from "@mui/material";
+
+// Lazy loaded components
+const BarChartComp = lazy(() => import("./BarChartComp"));
+const PieChartComp = lazy(() => import("./PieChartComp"));
+const TableComp = lazy(() => import("./TableComp"));
+
+type ChartView = "bar" | "pie" | "table";
+
+export interface ChartContainerRef {
+  getChartRef: () => HTMLDivElement | null;
+  exportChartToBase64: () => string | null;
+}
+
+const ChartContainer = forwardRef<ChartContainerRef>((_, ref) => {
+  const [view, setView] = useState<ChartView>("bar");
+  const chartRef = useRef<HTMLDivElement | null>(null);
+
+  useImperativeHandle(ref, () => ({
+    getChartRef: () => chartRef.current,
+    exportChartToBase64: () => {
+      if (!chartRef.current) return null;
+      const svg = chartRef.current.querySelector("svg");
+      if (!svg) return null;
+
+      const serializer = new XMLSerializer();
+      const svgString = serializer.serializeToString(svg);
+      return "data:image/svg+xml;base64," + btoa(svgString);
+    },
+  }));
+
+  const renderChart = useCallback(() => {
+    switch (view) {
+      case "bar":
+        return <BarChartComp ref={chartRef} />;
+      case "pie":
+        return <PieChartComp ref={chartRef} />;
+      case "table":
+        return <TableComp ref={chartRef} />;
+      default:
+        return null;
+    }
+  }, [view]);
+
+  return (
+    <Box
+      sx={{
+        width: 700,
+        height: 500,
+        border: "1px solid #ddd",
+        borderRadius: 2,
+        p: 2,
+        bgcolor: "#fff",
+      }}
+    >
+      <Box display="flex" justifyContent="center" mb={2}>
+        <ButtonGroup variant="outlined" size="small">
+          <Button
+            sx={{ height: 20, width: 100 }}
+            onClick={() => setView("bar")}
+          >
+            Bar Chart
+          </Button>
+          <Button
+            sx={{ height: 20, width: 100 }}
+            onClick={() => setView("pie")}
+          >
+            Pie Chart
+          </Button>
+          <Button
+            sx={{ height: 20, width: 100 }}
+            onClick={() => setView("table")}
+          >
+            Table
+          </Button>
+        </ButtonGroup>
+      </Box>
+
+      <Suspense
+        fallback={<Skeleton variant="rectangular" width="100%" height="100%" />}
+      >
+        {renderChart()}
+      </Suspense>
+    </Box>
+  );
+});
+
+ChartContainer.displayName = "ChartContainer";
+
+export default memo(ChartContainer);
+import React, { forwardRef } from "react";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
+
+interface DataItem {
+  name: string;
+  value: number;
+}
+
+const data: DataItem[] = [
+  { name: "A", value: 400 },
+  { name: "B", value: 300 },
+  { name: "C", value: 200 },
+  { name: "D", value: 100 },
+];
+
+const BarChartComp = forwardRef<HTMLDivElement>((_, ref) => (
+  <div ref={ref} style={{ width: "100%", height: "100%" }}>
+    <ResponsiveContainer>
+      <BarChart data={data}>
+        <CartesianGrid strokeDasharray="3 3" />
+        <XAxis dataKey="name" />
+        <YAxis />
+        <Tooltip />
+        <Bar dataKey="value" fill="#1976d2" />
+      </BarChart>
+    </ResponsiveContainer>
+  </div>
+));
+
+BarChartComp.displayName = "BarChartComp";
+
+export default BarChartComp;
+import React, { forwardRef } from "react";
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
+
+interface DataItem {
+  name: string;
+  value: number;
+}
+
+const data: DataItem[] = [
+  { name: "A", value: 400 },
+  { name: "B", value: 300 },
+  { name: "C", value: 300 },
+  { name: "D", value: 200 },
+];
+
+const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042"];
+
+const PieChartComp = forwardRef<HTMLDivElement>((_, ref) => (
+  <div ref={ref} style={{ width: "100%", height: "100%" }}>
+    <ResponsiveContainer>
+      <PieChart>
+        <Pie
+          data={data}
+          cx="50%"
+          cy="50%"
+          outerRadius={100}
+          dataKey="value"
+          label
+        >
+          {data.map((entry, index) => (
+            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+          ))}
+        </Pie>
+        <Tooltip />
+      </PieChart>
+    </ResponsiveContainer>
+  </div>
+));
+
+PieChartComp.displayName = "PieChartComp";
+
+export default PieChartComp;
