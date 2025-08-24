@@ -69,3 +69,172 @@ export function downloadMarkdownAsCSV(md: string, filename: string = "data.csv")
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+
+
+import React, { useState } from "react";
+import { Input, Button, Card } from "antd";
+import api from "../utils/axiosInstance";
+
+export default function LoginPage() {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+
+  const handleLogin = async () => {
+    try {
+      const res = await api.post("/login", { username, password });
+      localStorage.setItem("access_token", res.data.access_token);
+      localStorage.setItem("refresh_token", res.data.refresh_token);
+      alert("Login success!");
+    } catch (err) {
+      alert("Login failed");
+    }
+  };
+
+  const callProtected = async () => {
+    try {
+      const res = await api.get("/protected");
+      alert(res.data.msg);
+    } catch {
+      alert("Unauthorized");
+    }
+  };
+
+  return (
+    <div
+      style={{
+        backgroundImage: "url('/background.jpg')",
+        backgroundSize: "cover",
+        height: "100vh",
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+      }}
+    >
+      <Card style={{ width: 350, padding: 20, textAlign: "center" }}>
+        <h2>Sign in</h2>
+        <Input
+          placeholder="Username"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          style={{ marginBottom: 10 }}
+        />
+        <Input.Password
+          placeholder="Password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          style={{ marginBottom: 10 }}
+        />
+        <Button type="primary" block onClick={handleLogin}>
+          Login
+        </Button>
+        <Button style={{ marginTop: 10 }} onClick={callProtected} block>
+          Call Protected API
+        </Button>
+      </Card>
+    </div>
+  );
+}
+python-jose[cryptography]
+# main.py
+from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from jose import jwt, JWTError
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy import Column, String
+import httpx, asyncio
+import uuid
+
+DATABASE_URL = "sqlite+aiosqlite:///./users.db"
+SECRET_KEY = "your_local_secret"
+ALGORITHM = "HS256"
+
+# Azure details
+TENANT_ID = "your-tenant-id"
+CLIENT_ID = "your-client-id"
+CLIENT_SECRET = "your-client-secret"
+
+# DB setup
+engine = create_async_engine(DATABASE_URL, echo=False)
+async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+Base = declarative_base()
+
+class User(Base):
+    __tablename__ = "users"
+    username = Column(String, primary_key=True)
+    password = Column(String)
+
+app = FastAPI()
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+refresh_store = {}  # in-memory refresh tokens {refresh_token: username}
+
+# Create DB
+@app.on_event("startup")
+async def startup():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    async with async_session() as session:
+        user = await session.get(User, "admin")
+        if not user:
+            session.add(User(username="admin", password="admin123"))
+            await session.commit()
+
+# Azure token fetcher
+async def get_azure_token(username: str):
+    url = f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/token"
+    data = {
+        "grant_type": "client_credentials",
+        "client_id": CLIENT_ID,
+        "client_secret": CLIENT_SECRET,
+        "scope": "https://graph.microsoft.com/.default",
+    }
+    async with httpx.AsyncClient() as client:
+        r = await client.post(url, data=data)
+        r.raise_for_status()
+        azure_token = r.json()["access_token"]
+
+    # wrap in local JWT with username
+    access_token = jwt.encode({"sub": username}, SECRET_KEY, algorithm=ALGORITHM)
+    return access_token, azure_token
+
+# Login route
+@app.post("/login")
+async def login(data: dict):
+    username = data.get("username")
+    password = data.get("password")
+    async with async_session() as session:
+        user = await session.get(User, username)
+        if not user or user.password != password:
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    access_token, azure_token = await get_azure_token(username)
+    refresh_token = str(uuid.uuid4())
+    refresh_store[refresh_token] = username
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "azure_token": azure_token,
+    }
+
+# Refresh route
+@app.post("/refresh")
+async def refresh(data: dict):
+    old_refresh = data.get("refresh_token")
+    username = refresh_store.get(old_refresh)
+    if not username:
+        raise HTTPException(401, "Invalid refresh token")
+
+    new_access, azure_token = await get_azure_token(username)
+    new_refresh = str(uuid.uuid4())
+    refresh_store[new_refresh] = username
+    return {"access_token": new_access, "refresh_token": new_refresh, "azure_token": azure_token}
+
+# Protected route
+@app.get("/protected")
+async def protected(token: str = Depends(oauth2_scheme)):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return {"msg": f"Hello {payload['sub']}"}
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+https://codesandbox.io/p/devbox/recharts-to-png-forked-6qx7jc?workspaceId=ws_CrgtGvmivQfUBtLVpSKjPw
