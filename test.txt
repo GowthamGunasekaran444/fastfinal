@@ -1,17 +1,56 @@
-DATABRICKS_HOST = os.getenv("DATABRICKS_HOST")
-DATABRICKS_TOKEN = os.getenv("DATABRICKS_TOKEN")
-MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "databricks")
-MLFLOW_REGISTRY_URI = os.getenv("MLFLOW_REGISTRY_URI", "databricks-uc")
-EXPERIMENT_NAME = "/Users/you@example.com/llm-feedback-experiment"
+function markdownTableToJSON(md) {
+  const lines = md.split("\n").map(l => l.trim()).filter(Boolean);
 
-if not DATABRICKS_HOST or not DATABRICKS_TOKEN:
-    raise RuntimeError("DATABRICKS_HOST and DATABRICKS_TOKEN must be set!")
+  if (lines.length < 2) return [];
 
-mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-mlflow.set_registry_uri(MLFLOW_REGISTRY_URI)
-mlflow.set_experiment(EXPERIMENT_NAME)
+  // Extract headers dynamically
+  const headers = lines[0]
+    .split("|")
+    .map(h => h.trim())
+    .filter(h => h !== "");
 
+  const dataLines = lines.slice(2); // skip header + separator
 
+  let json = [];
+  let current = null;
+  let index = -1;
+
+  for (let line of dataLines) {
+    const parts = line.split("|").map(p => p.trim());
+
+    // Skip empty lines
+    if (parts.length <= 1) continue;
+
+    // Remove possible leading/ending empty cells
+    if (parts[0] === "") parts.shift();
+    if (parts[parts.length - 1] === "") parts.pop();
+
+    // If first column has main data (not continuation)
+    if (parts.some(p => p)) {
+      const rowObj = {};
+      headers.forEach((h, i) => {
+        rowObj[h || "Index"] = parts[i] || "";
+      });
+
+      // If this row has at least one "main" field (like IncidentNumber, etc.)
+      if (Object.values(rowObj).some(v => v !== "")) {
+        index++;
+        rowObj.Index = index;
+        current = rowObj;
+        json.push(current);
+      } else if (current) {
+        // continuation row → append cell values
+        headers.forEach((h, i) => {
+          if (parts[i]) {
+            current[h || "Index"] += " " + parts[i];
+          }
+        });
+      }
+    }
+  }
+
+  return JSON.stringify(json, null, 2);
+}
 
 model/table.py → User Table
 from sqlalchemy import Column, Integer, String
