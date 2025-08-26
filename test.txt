@@ -1,51 +1,86 @@
 type TableRow = Record<string, string>;
 
+/**
+ * Parse a markdown table into an array of objects.
+ * - Keeps header column positions (does NOT filter out empty header cells).
+ * - If the first header cell is empty, that column is treated as "index/placeholder"
+ *   and is omitted from the output objects.
+ * - If a data row has an empty "first data column" (after index if present),
+ *   it's treated as a continuation row and non-empty cells are appended to the
+ *   previous row's corresponding fields (separated by a single space).
+ */
 export function markdownTableToJSON(md: string): TableRow[] {
-  const lines: string[] = md
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean);
+  if (!md || typeof md !== "string") return [];
 
+  const rawLines = md.split("\n");
+  const lines = rawLines.map((l) => l.trim()).filter((l) => l.length > 0);
   if (lines.length < 2) return [];
 
-  // Extract headers (ignore empty ones like the first column with "")
-  const headers: string[] = lines[0]
-    .split("|")
-    .map((h) => h.trim())
-    .filter((h) => h !== "");
+  // Helper: split a markdown row into its cells while preserving empty inner cells
+  function splitRow(line: string): string[] {
+    const parts = line.split("|").map((s) => s.trim());
+    // remove leading/trailing empty artifact caused by starting/ending pipe
+    if (parts.length > 0 && parts[0] === "") parts.shift();
+    if (parts.length > 0 && parts[parts.length - 1] === "") parts.pop();
+    return parts;
+  }
 
-  const dataLines: string[] = lines.slice(2); // skip header + separator
+  // Header is assumed at first non-empty line
+  const headerCells = splitRow(lines[0]);
+  // find separator (usually the next line), and treat data after that
+  const dataLines = lines.slice(2);
 
-  const json: TableRow[] = [];
+  // The first header cell might be intentionally empty (index). We'll skip it in output.
+  const indexHeaderIsEmpty = headerCells.length > 0 && headerCells[0] === "";
+
+  // Determine index of the **first real data column** (first header that is not empty).
+  const firstDataColIdx = headerCells.findIndex((h) => h !== "");
+  const firstMappedIdx = firstDataColIdx === -1 ? 0 : firstDataColIdx;
+
+  const out: TableRow[] = [];
   let current: TableRow | null = null;
 
   for (const line of dataLines) {
-    let parts: string[] = line
-      .split("|")
-      .map((p) => p.trim())
-      .filter((p, idx, arr) => !(idx === 0 && p === "") && !(idx === arr.length - 1 && p === ""));
+    const partsRaw = splitRow(line);
+    // normalize parts length to header length (pad with empty strings if necessary)
+    const parts = partsRaw.slice(0); // clone
+    if (parts.length < headerCells.length) {
+      for (let i = parts.length; i < headerCells.length; i++) parts.push("");
+    } else if (parts.length > headerCells.length) {
+      // If there are more parts than headers, join extras into the last cell
+      const extras = parts.slice(headerCells.length - 1).join(" | ");
+      parts.splice(headerCells.length - 1, parts.length - (headerCells.length - 1), extras);
+    }
 
-    if (parts.length === 0) continue;
+    // Decide if this is a NEW row:
+    // - If the cell at firstMappedIdx has content => new row
+    // - Otherwise treat as continuation (append) to current row
+    const isNewRow = (parts[firstMappedIdx] || "").trim() !== "";
 
-    // Case 1: New row
-    if (parts.some((p) => p)) {
-      const rowObj: TableRow = {};
-      headers.forEach((h, i) => {
-        rowObj[h] = parts[i] || "";
-      });
-      current = rowObj;
-      json.push(current);
-    } else if (current) {
-      // Case 2: continuation row (append description fields)
-      headers.forEach((h, i) => {
-        if (parts[i]) {
-          current![h] = (current![h] || "") + " " + parts[i];
-        }
-      });
+    if (isNewRow) {
+      // build object mapping headers -> parts, skipping empty header (index) column
+      const obj: TableRow = {};
+      for (let i = 0; i < headerCells.length; i++) {
+        const header = headerCells[i];
+        if (header === "") continue; // skip index/placeholder header
+        obj[header] = parts[i] || "";
+      }
+      out.push(obj);
+      current = obj;
+    } else {
+      // continuation row: append non-empty cells to previous object's same fields
+      if (!current) continue; // nothing to append to
+      for (let i = 0; i < headerCells.length; i++) {
+        const header = headerCells[i];
+        if (header === "") continue; // skip index/placeholder header
+        const val = (parts[i] || "").trim();
+        if (!val) continue;
+        current[header] = (current[header] || "") + (current[header] ? " " : "") + val;
+      }
     }
   }
 
-  return json;
+  return out;
 }
 
 model/table.py → User Table
