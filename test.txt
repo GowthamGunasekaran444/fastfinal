@@ -1,3 +1,19 @@
+def get_cached_interactions(session_id: int, sqlite_db: Session, limit: int = 5):
+    """
+    Fetch cached interactions for a given session_id from SQLite.
+    Ordered by created_time ASC (oldest first).
+    """
+    interactions = (
+        sqlite_db.query(InteractionCache)
+        .filter(InteractionCache.session_id == session_id)
+        .order_by(InteractionCache.created_time.asc())
+        .limit(limit)
+        .all()
+    )
+    return interactions
+
+
+
 from sqlalchemy import Column, Integer, String, DateTime, create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
