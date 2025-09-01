@@ -1,213 +1,150 @@
-type TableRow = Record<string, string>;
-
-/**
- * Parse a markdown table into an array of objects.
- * - Keeps header column positions (does NOT filter out empty header cells).
- * - If the first header cell is empty, that column is treated as "index/placeholder"
- *   and is omitted from the output objects.
- * - If a data row has an empty "first data column" (after index if present),
- *   it's treated as a continuation row and non-empty cells are appended to the
- *   previous row's corresponding fields (separated by a single space).
- */
-export function markdownTableToJSON(md: string): TableRow[] {
-  if (!md || typeof md !== "string") return [];
-
-  const rawLines = md.split("\n");
-  const lines = rawLines.map((l) => l.trim()).filter((l) => l.length > 0);
-  if (lines.length < 2) return [];
-
-  // Helper: split a markdown row into its cells while preserving empty inner cells
-  function splitRow(line: string): string[] {
-    const parts = line.split("|").map((s) => s.trim());
-    // remove leading/trailing empty artifact caused by starting/ending pipe
-    if (parts.length > 0 && parts[0] === "") parts.shift();
-    if (parts.length > 0 && parts[parts.length - 1] === "") parts.pop();
-    return parts;
-  }
-
-  // Header is assumed at first non-empty line
-  const headerCells = splitRow(lines[0]);
-  // find separator (usually the next line), and treat data after that
-  const dataLines = lines.slice(2);
-
-  // The first header cell might be intentionally empty (index). We'll skip it in output.
-  const indexHeaderIsEmpty = headerCells.length > 0 && headerCells[0] === "";
-
-  // Determine index of the **first real data column** (first header that is not empty).
-  const firstDataColIdx = headerCells.findIndex((h) => h !== "");
-  const firstMappedIdx = firstDataColIdx === -1 ? 0 : firstDataColIdx;
-
-  const out: TableRow[] = [];
-  let current: TableRow | null = null;
-
-  for (const line of dataLines) {
-    const partsRaw = splitRow(line);
-    // normalize parts length to header length (pad with empty strings if necessary)
-    const parts = partsRaw.slice(0); // clone
-    if (parts.length < headerCells.length) {
-      for (let i = parts.length; i < headerCells.length; i++) parts.push("");
-    } else if (parts.length > headerCells.length) {
-      // If there are more parts than headers, join extras into the last cell
-      const extras = parts.slice(headerCells.length - 1).join(" | ");
-      parts.splice(headerCells.length - 1, parts.length - (headerCells.length - 1), extras);
-    }
-
-    // Decide if this is a NEW row:
-    // - If the cell at firstMappedIdx has content => new row
-    // - Otherwise treat as continuation (append) to current row
-    const isNewRow = (parts[firstMappedIdx] || "").trim() !== "";
-
-    if (isNewRow) {
-      // build object mapping headers -> parts, skipping empty header (index) column
-      const obj: TableRow = {};
-      for (let i = 0; i < headerCells.length; i++) {
-        const header = headerCells[i];
-        if (header === "") continue; // skip index/placeholder header
-        obj[header] = parts[i] || "";
-      }
-      out.push(obj);
-      current = obj;
-    } else {
-      // continuation row: append non-empty cells to previous object's same fields
-      if (!current) continue; // nothing to append to
-      for (let i = 0; i < headerCells.length; i++) {
-        const header = headerCells[i];
-        if (header === "") continue; // skip index/placeholder header
-        const val = (parts[i] || "").trim();
-        if (!val) continue;
-        current[header] = (current[header] || "") + (current[header] ? " " : "") + val;
-      }
-    }
-  }
-
-  return out;
-}
-
-model/table.py → User Table
-from sqlalchemy import Column, Integer, String
-from sqlalchemy.orm import declarative_base
-from passlib.context import CryptContext
+from sqlalchemy import Column, Integer, String, DateTime, create_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from datetime import datetime
 
 Base = declarative_base()
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-class User(Base):
-    __tablename__ = "users"
+class InteractionCache(Base):
+    __tablename__ = 'interaction_cache'
 
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String, unique=True, index=True, nullable=False)
-    email = Column(String, unique=True, index=True, nullable=False)
-    password = Column(String, nullable=False)
+    id = Column(Integer, primary_key=True)
+    interaction_id = Column(String, nullable=False)
+    user_id = Column(String, nullable=False)
+    session_id = Column(String, nullable=False)
+    conversation = Column(String, nullable=False)  # or JSON if needed
+    created_time = Column(DateTime, default=datetime.utcnow, nullable=False)
 
-    @staticmethod
-    def hash_password(password: str) -> str:
-        return pwd_context.hash(password)
 
-    @staticmethod
-    def verify_password(password: str, hashed: str) -> bool:
-        return pwd_context.verify(password, hashed)
+# SQLite for cache
+sqlite_engine = create_engine("sqlite:///interaction_cache.db", echo=False)
+SQLiteSessionLocal = sessionmaker(bind=sqlite_engine)
 
-schema/schema.py → Pydantic Schemas
-from pydantic import BaseModel, EmailStr
+# SQL Server session (assume already exists)
+# sql_server_session = Your existing SQL Server session
+# SQLServerInteraction = Your existing SQL Server Interaction model
 
-class UserLogin(BaseModel):
-    username: str
-    password: str
+Base.metadata.create_all(bind=sqlite_engine)
 
-class Token(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
 
-class RefreshTokenRequest(BaseModel):
-    token: str
 
-repository/repository.py → DB Access
-from sqlalchemy.orm import Session
-from source.main.login.model.table import User
 
-def get_user_by_username(db: Session, username: str):
-    return db.query(User).filter(User.username == username).first()
+def sync_from_sqlserver(sql_server_session, sqlite_session, session_id: str):
+    """
+    Fetch last 5 interactions from SQL Server by session_id.
+    Insert into SQLite cache if they don't exist.
+    """
+    # Assume SQLServerInteraction is your existing model
+    from SQLServerModels import Interaction as SQLServerInteraction  # Adjust import
 
-def get_user_by_email(db: Session, email: str):
-    return db.query(User).filter(User.email == email).first()
+    results = (
+        sql_server_session.query(SQLServerInteraction)
+        .filter(SQLServerInteraction.session_id == session_id)
+        .order_by(SQLServerInteraction.created_time.desc())
+        .limit(5)
+        .all()
+    )
 
-utils/auth.py → JWT Functions
-from datetime import datetime, timedelta
-from jose import jwt, JWTError
+    for interaction in results:
+        exists = sqlite_session.query(InteractionCache).filter(
+            InteractionCache.interaction_id == interaction.interaction_id
+        ).first()
 
-SECRET_KEY = "SECRET_KEY_CHANGE_ME"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 15
+        if not exists:
+            cache_entry = InteractionCache(
+                interaction_id=interaction.interaction_id,
+                user_id=interaction.user_id,
+                session_id=interaction.session_id,
+                conversation=str(interaction.conversation),  # Adjust field access
+                created_time=interaction.created_time
+            )
+            sqlite_session.add(cache_entry)
 
-def create_token(data: dict, expires_delta: timedelta = None):
-    to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    sqlite_session.commit()
 
-def verify_token(token: str):
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        return payload  # contains username + email
-    except JWTError:
-        return None
 
-controller/controller.py → Router
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from source.main.login.schema.schema import UserLogin, Token, RefreshTokenRequest
-from source.main.login.repository.repository import get_user_by_username, get_user_by_email
-from source.main.login.model.table import User
-from source.main.utils.auth import create_token, verify_token
-from source.main.database import get_db  # <-- assuming you already have this
 
-router = APIRouter(prefix="/auth", tags=["auth"])
 
-@router.post("/login", response_model=Token)
-def login(payload: UserLogin, db: Session = Depends(get_db)):
-    user = get_user_by_username(db, payload.username)
-    if not user or not User.verify_password(payload.password, user.password):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
-    token = create_token({"sub": user.username, "email": user.email})
-    return {"access_token": token}
 
-@router.post("/refresh", response_model=Token)
-def refresh_token(req: RefreshTokenRequest, db: Session = Depends(get_db)):
-    payload = verify_token(req.token)
-    if not payload:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+def insert_into_cache(sqlite_session, interaction_id: str, user_id: str, session_id: str, conversation: str):
+    """
+    Insert new interaction into SQLite cache.
+    If more than 5 for session_id, remove the oldest.
+    """
+    new_entry = InteractionCache(
+        interaction_id=interaction_id,
+        user_id=user_id,
+        session_id=session_id,
+        conversation=conversation,
+        created_time=datetime.utcnow()
+    )
+    sqlite_session.add(new_entry)
+    sqlite_session.commit()
 
-    email = payload.get("email")
-    user = get_user_by_email(db, email)
-    if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    # Keep only the latest 5 interactions per session_id
+    cached_interactions = sqlite_session.query(InteractionCache).filter(
+        InteractionCache.session_id == session_id
+    ).order_by(InteractionCache.created_time.desc()).all()
 
-    new_token = create_token({"sub": user.username, "email": user.email})
-    return {"access_token": new_token}
+    if len(cached_interactions) > 5:
+        # Delete the oldest ones beyond the 5th
+        to_delete = cached_interactions[5:]
+        for old in to_delete:
+            sqlite_session.delete(old)
+        sqlite_session.commit()
 
-🔑 How to Use verify_token in Other Routers
-Example in another API router:
 
-python
-Copy
-Edit
-from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
-from source.main.utils.auth import verify_token
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
-def get_current_user(token: str = Depends(oauth2_scheme)):
-    payload = verify_token(token)
-    if not payload:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
-    return payload  # gives {"sub": username, "email": email}
-Then in your API:
 
-python
-Copy
-Edit
-@router.get("/secure-data")
-def secure_data(current_user=Depends(get_current_user)):
-    return {"message": f"Hello {current_user['sub']} ({current_user['email']})"}
+def chat_with_gpt_and_update_cache(
+    sql_server_session,
+    sqlite_session,
+    session_id: str,
+    user_message: str,
+    api_endpoint: str
+):
+    """
+    Full flow:
+    1. Sync last 5 from SQL Server → SQLite (if needed)
+    2. Call chat API
+    3. Save response to SQL Server
+    4. Insert into SQLite cache (with trim)
+    """
+    # Step 1: Sync existing interactions from SQL Server to SQLite cache
+    sync_from_sqlserver(sql_server_session, sqlite_session, session_id)
+
+    # Step 2: Call your chat API (placeholder)
+    api_response = call_chat_api(api_endpoint, user_message)  # Implement this
+    reply_text = api_response.get("response")
+
+    # Assume you have a new interaction_id, user_id, etc.
+    from uuid import uuid4
+    new_interaction_id = str(uuid4())
+    user_id = "user_123"  # Should come from context
+
+    # Step 3: Save to SQL Server (your existing logic)
+    from SQLServerModels import Interaction as SQLServerInteraction
+    new_sqlserver_interaction = SQLServerInteraction(
+        interaction_id=new_interaction_id,
+        user_id=user_id,
+        session_id=session_id,
+        conversation=reply_text,
+        created_time=datetime.utcnow()
+    )
+    sql_server_session.add(new_sqlserver_interaction)
+    sql_server_session.commit()
+
+    # Step 4: Insert into SQLite cache (auto-trimmed)
+    insert_into_cache(
+        sqlite_session=sqlite_session,
+        interaction_id=new_interaction_id,
+        user_id=user_id,
+        session_id=session_id,
+        conversation=reply_text
+    )
+
+    return reply_text
+
+
