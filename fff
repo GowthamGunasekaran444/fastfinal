@@ -1,0 +1,89 @@
+import os
+import pkg_resources
+import importlib.util
+import ast
+
+# ------------------------------
+# Function to calculate folder size
+# ------------------------------
+def get_folder_size(path):
+    total_size = 0
+    for dirpath, dirnames, filenames in os.walk(path):
+        for f in filenames:
+            fp = os.path.join(dirpath, f)
+            if os.path.isfile(fp):
+                total_size += os.path.getsize(fp)
+    return total_size
+
+# ------------------------------
+# Function to find package path
+# ------------------------------
+def get_package_path(package_name):
+    spec = importlib.util.find_spec(package_name)
+    if spec and spec.origin:
+        if spec.submodule_search_locations:
+            return spec.submodule_search_locations[0]
+        else:
+            return os.path.dirname(spec.origin)
+    return None
+
+# ------------------------------
+# Function to parse imports from Python code
+# ------------------------------
+def get_imported_packages(file_path):
+    with open(file_path, "r", encoding="utf-8") as f:
+        tree = ast.parse(f.read(), filename=file_path)
+    imports = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for n in node.names:
+                imports.add(n.name.split('.')[0])
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                imports.add(node.module.split('.')[0])
+    return imports
+
+# ------------------------------
+# Main: Analyze packages
+# ------------------------------
+# 1. Get all installed packages
+installed_packages = {}
+for dist in pkg_resources.working_set:
+    installed_packages[dist.project_name] = dist.version
+
+# 2. Get imported packages from your code
+# Replace 'your_code_folder' with your project folder path
+project_folder = "your_code_folder"
+imported_packages = set()
+
+for root, dirs, files in os.walk(project_folder):
+    for file in files:
+        if file.endswith(".py"):
+            file_path = os.path.join(root, file)
+            imported_packages.update(get_imported_packages(file_path))
+
+# 3. Collect package sizes and check usage
+packages_info = []
+for name, version in installed_packages.items():
+    path = get_package_path(name)
+    size_mb = 0
+    if path and os.path.exists(path):
+        size_mb = get_folder_size(path) / (1024*1024)
+    
+    used = "✅" if name.lower() in (pkg.lower() for pkg in imported_packages) else "❌"
+    packages_info.append((name, version, size_mb, used))
+
+# 4. Sort by size
+packages_info.sort(key=lambda x: x[2], reverse=True)
+
+# 5. Print results
+print(f"{'Package':30} {'Version':10} {'Size(MB)':>10} {'Used':>6}")
+print("-"*60)
+for name, version, size, used in packages_info:
+    print(f"{name:30} {version:10} {size:10.2f} {used:>6}")
+
+# Optional: Suggest removal
+print("\nSuggested removal (installed but not used in code):")
+for name, version, size, used in packages_info:
+    if used == "❌":
+        print(f"- {name} ({size:.2f} MB)")
