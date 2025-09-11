@@ -21,3 +21,81 @@ function jsonToCsv(data) {
     keys_to_keep = ["id", "name", "age", "city", "status"]
     filtered = {k: data[k] for k in keys_to_keep if k in data}
     return filtered
+import urllib
+from sqlalchemy import create_engine
+from sqlalchemy.orm import declarative_base, sessionmaker
+from azure.identity.aio import DefaultAzureCredential
+from azure.keyvault.secrets.aio import SecretClient
+from azure.identity import ClientSecretCredential
+
+# SQLAlchemy Base
+Base = declarative_base()
+
+# These come from your Azure setup
+TENANT_ID = "<your-tenant-id>"
+CLIENT_ID = "<your-client-id>"
+SERVER = "<your-sql-server-name>.database.windows.net"
+DATABASE = "<your-database-name>"
+KEY_VAULT_URL = "https://<your-keyvault-name>.vault.azure.net"
+SECRET_NAME = "MyClientSecret"
+
+# Engine placeholder
+sqlserver_engine = None
+SessionLocal = None
+
+
+async def init_db_engine():
+    global sqlserver_engine, SessionLocal
+
+    # 1. Fetch client secret from Azure Key Vault
+    credential = DefaultAzureCredential()
+    secret_client = SecretClient(vault_url=KEY_VAULT_URL, credential=credential)
+
+    secret_bundle = await secret_client.get_secret(SECRET_NAME)
+    CLIENT_SECRET = secret_bundle.value
+
+    # Close Key Vault client
+    await credential.close()
+    await secret_client.close()
+
+    # 2. Get token for SQL DB using client creds
+    cred = ClientSecretCredential(
+        tenant_id=TENANT_ID,
+        client_id=CLIENT_ID,
+        client_secret=CLIENT_SECRET,
+    )
+    token = cred.get_token("https://database.windows.net/.default")
+
+    # 3. Build ODBC connection string
+    odbc_str = (
+        "Driver={ODBC Driver 17 for SQL Server};"
+        f"Server={SERVER};"
+        f"Database={DATABASE};"
+        "Encrypt=yes;"
+        "TrustServerCertificate=no;"
+        "Connection Timeout=30;"
+    )
+
+    params = urllib.parse.quote_plus(odbc_str)
+
+    # 4. Create SQLAlchemy engine
+    sqlserver_engine = create_engine(
+        f"mssql+pyodbc:///?odbc_connect={params}",
+        connect_args={"attrs_before": {1256: token.token}},
+    )
+
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=sqlserver_engine)
+    print("✅ SQL Server Engine initialized!")
+
+
+# Example: FastAPI lifespan hook
+from fastapi import FastAPI
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_db_engine()
+    yield
+    # You can add engine.dispose() here if needed
+
+app = FastAPI(lifespan=lifespan)
