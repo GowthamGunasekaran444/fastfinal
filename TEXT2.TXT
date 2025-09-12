@@ -1,4 +1,39 @@
-function jsonToCsv(data) {
+function parseFinancialOrPercentString(str) {
+  if (typeof str !== 'string') return NaN;
+
+  // Define multipliers for suffixes
+  const suffixes = {
+    K: 1e3,   // Thousand
+    M: 1e6,   // Million
+    B: 1e9,   // Billion
+    T: 1e12,  // Trillion
+    '%': 0.01 // Percentage → divide by 100
+  };
+
+  // Remove $, commas, and whitespace
+  let cleaned = str.replace(/[$,\s]/g, '').trim();
+
+  // Match optional minus, digits (with decimal), optional suffix (%, K, M, B, T)
+  const match = cleaned.match(/^(-?)(\d+(?:\.\d+)?)([%KMBT]?)$/i);
+
+  if (!match) return NaN;
+
+  const [, sign, numberStr, suffix] = match;
+  let num = parseFloat(numberStr);
+
+  // Apply sign
+  if (sign === '-') num = -num;
+
+  // Apply multiplier if suffix exists
+  if (suffix) {
+    const key = suffix.toUpperCase();
+    const multiplier = suffixes[key] !== undefined ? suffixes[key] : NaN;
+    if (isNaN(multiplier)) return NaN; // Unsupported suffix
+    num *= multiplier;
+  }
+
+  return num;
+}function jsonToCsv(data) {
   if (!data || !data.length) return "";
 
   const headers = Object.keys(data[0]);
