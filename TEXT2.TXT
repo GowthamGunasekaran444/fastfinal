@@ -1,3 +1,20 @@
+odbc_str = (
+    "Driver={ODBC Driver 17 for SQL Server};"
+    "Server=<your-server>.database.windows.net;"
+    "Database=<your-db>;"
+    "Encrypt=yes;"
+    "TrustServerCertificate=no;"
+    "Connection Timeout=30;"
+)
+params = urllib.parse.quote_plus(odbc_str)
+
+engine = create_engine(
+    f"mssql+pyodbc:///?odbc_connect={params}",
+    connect_args={"attrs_before": {1256: token.token}},
+)
+
+
+
 function parseFinancialOrPercentString(str) {
   if (typeof str !== 'string') return NaN;
 
